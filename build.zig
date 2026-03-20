@@ -11,6 +11,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // ---- Prelude module (shared between compiler and LSP) ------------------
+    const prelude_mod = b.addModule("prelude", .{
+        .root_source_file = b.path("src/compiler/prelude.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // ---- Compiler modules --------------------------------------------------
     const diag_mod = b.addModule("diag", .{
         .root_source_file = b.path("src/compiler/diag.zig"),
@@ -162,6 +169,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
+                .{ .name = "prelude",      .module = prelude_mod },
                 .{ .name = "runtime", .module = runtime_mod },
                 .{ .name = "diag", .module = diag_mod },
                 .{ .name = "token", .module = token_mod },
@@ -199,6 +207,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "prelude",  .module = prelude_mod },
             .{ .name = "jsonrpc", .module = jsonrpc_mod },
             .{ .name = "runtime", .module = runtime_mod },
             .{ .name = "ast",     .module = ast_mod },
@@ -296,6 +305,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "lexer",    .module = lexer_mod },
             .{ .name = "parser",   .module = parser_mod },
             .{ .name = "sema",     .module = sema_mod },
+            .{ .name = "prelude",  .module = prelude_mod },
         } },
     };
 

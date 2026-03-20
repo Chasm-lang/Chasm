@@ -4,26 +4,131 @@
   "fileTypes": ["chasm"],
   "patterns": [
     { "include": "#comment" },
-    { "include": "#module_attr" },
-    { "include": "#lifetime_annotation" },
-    { "include": "#keyword" },
-    { "include": "#builtin_function" },
-    { "include": "#atom" },
     { "include": "#string" },
+    { "include": "#fn_decl" },
+    { "include": "#struct_decl" },
+    { "include": "#enum_decl" },
+    { "include": "#extern_decl" },
+    { "include": "#import_decl" },
+    { "include": "#module_attr_decl" },
+    { "include": "#module_attr_ref" },
+    { "include": "#lifetime_annotation" },
+    { "include": "#type_annotation" },
+    { "include": "#atom" },
+    { "include": "#keyword_control" },
+    { "include": "#keyword_loop" },
+    { "include": "#keyword_return" },
+    { "include": "#keyword_match" },
+    { "include": "#keyword_lifetime_op" },
+    { "include": "#keyword_builder" },
+    { "include": "#constant_language" },
+    { "include": "#builtin_function" },
+    { "include": "#function_call" },
     { "include": "#number" },
     { "include": "#operator" },
+    { "include": "#type_name" },
     { "include": "#identifier" }
   ],
   "repository": {
+
     "comment": {
       "name": "comment.line.number-sign.chasm",
       "match": "#.*$"
     },
-    "module_attr": {
-      "name": "variable.other.module-attribute.chasm",
+
+    "string": {
+      "name": "string.quoted.double.chasm",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "meta.interpolation.chasm",
+          "begin": "#\\{",
+          "beginCaptures": {
+            "0": { "name": "punctuation.section.interpolation.begin.chasm" }
+          },
+          "end": "\\}",
+          "endCaptures": {
+            "0": { "name": "punctuation.section.interpolation.end.chasm" }
+          },
+          "patterns": [
+            { "include": "#module_attr_ref" },
+            { "include": "#builtin_function" },
+            { "include": "#function_call" },
+            { "include": "#number" },
+            { "include": "#operator" },
+            { "include": "#identifier" }
+          ]
+        },
+        {
+          "name": "constant.character.escape.chasm",
+          "match": "\\\\[nrt\\\\\"0]"
+        }
+      ]
+    },
+
+    "fn_decl": {
+      "comment": "def funcname(...) or defp funcname(...)",
+      "match": "\\b(def|defp)\\s+([a-zA-Z_][a-zA-Z0-9_?!]*)\\b",
+      "captures": {
+        "1": { "name": "keyword.declaration.function.chasm" },
+        "2": { "name": "entity.name.function.chasm" }
+      }
+    },
+
+    "struct_decl": {
+      "comment": "defstruct TypeName",
+      "match": "\\b(defstruct)\\s+([A-Z][a-zA-Z0-9_]*)\\b",
+      "captures": {
+        "1": { "name": "keyword.declaration.struct.chasm" },
+        "2": { "name": "entity.name.type.chasm" }
+      }
+    },
+
+    "enum_decl": {
+      "comment": "enum TypeName",
+      "match": "\\b(enum)\\s+([A-Z][a-zA-Z0-9_]*)\\b",
+      "captures": {
+        "1": { "name": "keyword.declaration.enum.chasm" },
+        "2": { "name": "entity.name.enum.chasm" }
+      }
+    },
+
+    "extern_decl": {
+      "comment": "extern fn name(...)",
+      "match": "\\b(extern)\\s+(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+      "captures": {
+        "1": { "name": "keyword.declaration.extern.chasm" },
+        "2": { "name": "keyword.declaration.function.chasm" },
+        "3": { "name": "entity.name.function.chasm" }
+      }
+    },
+
+    "import_decl": {
+      "comment": "import \"path\"",
+      "match": "\\b(import)\\b",
+      "captures": {
+        "1": { "name": "keyword.control.import.chasm" }
+      }
+    },
+
+    "module_attr_decl": {
+      "comment": "@name :: lifetime [type] = ...",
+      "match": "(@[a-zA-Z_][a-zA-Z0-9_]*)\\s*(::)",
+      "captures": {
+        "1": { "name": "variable.other.constant.module-attribute.chasm" },
+        "2": { "name": "keyword.operator.annotation.chasm" }
+      }
+    },
+
+    "module_attr_ref": {
+      "comment": "@name used as a value",
+      "name": "variable.other.constant.module-attribute.chasm",
       "match": "@[a-zA-Z_][a-zA-Z0-9_]*"
     },
+
     "lifetime_annotation": {
+      "comment": "frame / script / persistent as lifetime qualifiers",
       "patterns": [
         {
           "name": "storage.modifier.lifetime.frame.chasm",
@@ -39,53 +144,151 @@
         }
       ]
     },
-    "keyword": {
+
+    "type_annotation": {
+      "comment": ":: followed by a type keyword or uppercase type name",
       "patterns": [
         {
-          "name": "keyword.control.chasm",
-          "match": "\\b(if|else|end|while|case|when|do)\\b"
+          "name": "keyword.operator.annotation.chasm",
+          "match": "::"
         },
         {
-          "name": "keyword.declaration.chasm",
-          "match": "\\b(def|defp|defstruct)\\b"
-        },
-        {
-          "name": "constant.language.chasm",
-          "match": "\\b(true|false|nil)\\b"
+          "name": "support.type.primitive.chasm",
+          "match": "\\b(int|float|bool|str|string|void|array|atom)\\b"
         }
       ]
     },
-    "builtin_function": {
-      "name": "support.function.builtin.chasm",
-      "match": "\\b(copy_to_script|persist_copy|scale|clamp|abs|sqrt|print)\\b"
-    },
+
     "atom": {
+      "comment": ":atom_name  — compile-time symbols",
       "name": "constant.other.atom.chasm",
       "match": ":[a-zA-Z_][a-zA-Z0-9_]*"
     },
-    "string": {
-      "name": "string.quoted.double.chasm",
-      "begin": "\"",
-      "end": "\"",
+
+    "keyword_control": {
+      "comment": "if / else / end / do / while",
+      "name": "keyword.control.chasm",
+      "match": "\\b(if|else|end|do|while)\\b"
+    },
+
+    "keyword_loop": {
+      "comment": "for / in / break / continue",
       "patterns": [
         {
-          "name": "constant.character.escape.chasm",
-          "match": "\\\\."
+          "name": "keyword.control.loop.chasm",
+          "match": "\\b(for|in)\\b"
+        },
+        {
+          "name": "keyword.control.flow.break.chasm",
+          "match": "\\bbreak\\b"
+        },
+        {
+          "name": "keyword.control.flow.continue.chasm",
+          "match": "\\bcontinue\\b"
         }
       ]
     },
+
+    "keyword_return": {
+      "name": "keyword.control.flow.return.chasm",
+      "match": "\\breturn\\b"
+    },
+
+    "keyword_match": {
+      "comment": "case / when / match — pattern matching",
+      "patterns": [
+        {
+          "name": "keyword.control.match.chasm",
+          "match": "\\b(case|when|match)\\b"
+        },
+        {
+          "comment": "wildcard pattern _",
+          "name": "variable.language.wildcard.chasm",
+          "match": "\\b_\\b"
+        }
+      ]
+    },
+
+    "keyword_lifetime_op": {
+      "comment": "copy_to_script / persist_copy — explicit lifetime promotions",
+      "patterns": [
+        {
+          "name": "keyword.operator.lifetime-promotion.chasm",
+          "match": "\\b(copy_to_script|persist_copy)\\b"
+        }
+      ]
+    },
+
+    "keyword_builder": {
+      "comment": "builder / finish / freeze — builder pattern keywords",
+      "name": "keyword.other.builder.chasm",
+      "match": "\\b(builder|finish|freeze)\\b"
+    },
+
+    "constant_language": {
+      "name": "constant.language.chasm",
+      "match": "\\b(true|false)\\b"
+    },
+
+    "builtin_function": {
+      "comment": "All built-in functions from the Chasm runtime",
+      "patterns": [
+        {
+          "comment": "Math builtins",
+          "name": "support.function.builtin.math.chasm",
+          "match": "\\b(abs|sqrt|sin|cos|tan|atan2|floor|ceil|round|min|max|clamp|scale|lerp|deg_to_rad|rad_to_deg|pow|log2|log10|exp|sign|fract|step)\\b(?=\\s*\\()"
+        },
+        {
+          "comment": "String builtins",
+          "name": "support.function.builtin.string.chasm",
+          "match": "\\b(str_len|str_concat|str_repeat|str_slice|str_char_at|str_starts_with|str_ends_with|str_eq|int_to_str|float_to_str|bool_to_str)\\b(?=\\s*\\()"
+        },
+        {
+          "comment": "Array builtins",
+          "name": "support.function.builtin.array.chasm",
+          "match": "\\b(array_new|array_push|array_pop|array_get|array_set|array_len|array_clear)\\b(?=\\s*\\()"
+        },
+        {
+          "comment": "Type conversion builtins",
+          "name": "support.function.builtin.conversion.chasm",
+          "match": "\\b(to_int|to_float)\\b(?=\\s*\\()"
+        },
+        {
+          "comment": "Bit operation builtins",
+          "name": "support.function.builtin.bits.chasm",
+          "match": "\\b(bit_and|bit_or|bit_xor|bit_not|bit_shl|bit_shr)\\b(?=\\s*\\()"
+        },
+        {
+          "comment": "I/O and debug builtins",
+          "name": "support.function.builtin.io.chasm",
+          "match": "\\b(print|log|assert|assert_eq|todo|time_ms|random|random_float|random_seed)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+
+    "function_call": {
+      "comment": "any_function( — highlight the name before parens",
+      "name": "entity.name.function.chasm",
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_?!]*)\\s*(?=\\()"
+    },
+
     "number": {
       "patterns": [
         {
+          "name": "constant.numeric.hex.chasm",
+          "match": "\\b0x[0-9a-fA-F]+\\b"
+        },
+        {
           "name": "constant.numeric.float.chasm",
-          "match": "\\b[0-9]+\\.[0-9]+\\b"
+          "match": "-?\\b[0-9]+\\.[0-9]+\\b"
         },
         {
           "name": "constant.numeric.integer.chasm",
-          "match": "\\b[0-9]+\\b"
+          "match": "-?\\b[0-9]+\\b"
         }
       ]
     },
+
     "operator": {
       "patterns": [
         {
@@ -93,22 +296,74 @@
           "match": "\\|>"
         },
         {
-          "name": "keyword.operator.lifetime.chasm",
-          "match": "::"
+          "name": "keyword.operator.fat-arrow.chasm",
+          "match": "=>"
         },
         {
           "name": "keyword.operator.arrow.chasm",
           "match": "->"
         },
         {
-          "name": "keyword.operator.chasm",
-          "match": "[+\\-*/<>=!&|]+"
+          "name": "keyword.operator.range.chasm",
+          "match": "\\.\\."
+        },
+        {
+          "name": "keyword.operator.comparison.chasm",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.assignment.chasm",
+          "match": "(?<![=!<>])=(?!=)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.chasm",
+          "match": "[+\\-*/%]"
+        },
+        {
+          "name": "keyword.operator.logical.chasm",
+          "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.not.chasm",
+          "match": "!"
+        },
+        {
+          "name": "punctuation.separator.comma.chasm",
+          "match": ","
+        },
+        {
+          "name": "punctuation.accessor.dot.chasm",
+          "match": "(?<![.])\\."
+        },
+        {
+          "name": "punctuation.section.brackets.begin.chasm",
+          "match": "\\["
+        },
+        {
+          "name": "punctuation.section.brackets.end.chasm",
+          "match": "\\]"
+        },
+        {
+          "name": "punctuation.section.parens.begin.chasm",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.section.parens.end.chasm",
+          "match": "\\)"
         }
       ]
     },
+
+    "type_name": {
+      "comment": "UpperCase identifiers used as type names (struct/enum names)",
+      "name": "entity.name.type.chasm",
+      "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+    },
+
     "identifier": {
       "name": "variable.other.chasm",
-      "match": "[a-zA-Z_][a-zA-Z0-9_?!]*"
+      "match": "\\b[a-zA-Z_][a-zA-Z0-9_?!]*\\b"
     }
+
   }
 }

@@ -81,6 +81,8 @@ pub const Instr = union(enum) {
     ret:     TempId,
     /// Return void.
     ret_void,
+    /// Return multiple values (multi-return function).
+    ret_tuple: struct { fn_name: []const u8, values: []const TempId },
 };
 
 // ---------------------------------------------------------------------------
@@ -128,6 +130,17 @@ pub const IrExternFn = struct {
     c_name: []const u8,
 };
 
+pub const IrStructField = struct {
+    name: []const u8,
+    type_id: u32,
+};
+
+pub const IrStructDef = struct {
+    name: []const u8,
+    type_id: u32,
+    fields: []const IrStructField,
+};
+
 /// An imported function forward declaration (for use across module boundaries).
 pub const IrImportedFn = struct {
     name: []const u8,
@@ -135,6 +148,14 @@ pub const IrImportedFn = struct {
     ret_c_type: []const u8,
     /// C parameter types in order.
     param_c_types: []const []const u8,
+};
+
+/// Metadata for functions that return multiple values.
+/// The generated C function returns a struct `ChRet_<name>` with fields v0, v1, ...
+pub const IrTupleReturn = struct {
+    fn_name: []const u8,
+    /// TypeIds of the return values, in order.
+    type_ids: []const u32,
 };
 
 /// The fully-lowered module ready for codegen.
@@ -150,6 +171,10 @@ pub const IrModule = struct {
     extern_fns:       []const IrExternFn,
     /// Forward declarations of imported module functions.
     imported_fwd_decls: []const IrImportedFn,
+    /// Struct type definitions.
+    struct_defs: []const IrStructDef,
+    /// Multi-return function metadata.
+    tuple_returns: []const IrTupleReturn,
 };
 
 // ---------------------------------------------------------------------------
@@ -157,6 +182,16 @@ pub const IrModule = struct {
 // ---------------------------------------------------------------------------
 
 pub fn printModule(module: IrModule, writer: anytype) !void {
+    // Print struct defs
+    for (module.struct_defs) |sd| {
+        try writer.print("struct {s} {{\n", .{sd.name});
+        for (sd.fields) |f| {
+            try writer.print("  {s}: {d}\n", .{ f.name, f.type_id });
+        }
+        try writer.print("}}\n", .{});
+    }
+    if (module.struct_defs.len > 0) try writer.print("\n", .{});
+
     // Print enum variants
     for (module.enum_variants) |ev| {
         try writer.print("enum {s}.{s} = {d}\n", .{ ev.enum_name, ev.variant_name, ev.index });
@@ -216,6 +251,14 @@ fn printInstr(instr: Instr, writer: anytype) !void {
         .jump         => |id| try writer.print("  jmp L{d}\n",            .{id}),
         .ret          => |t|  try writer.print("  ret %{d}\n",            .{t}),
         .ret_void     =>      try writer.print("  ret\n",                 .{}),
+        .ret_tuple    => |rt| {
+            try writer.print("  ret_tuple_{s}(", .{rt.fn_name});
+            for (rt.values, 0..) |t, i| {
+                if (i > 0) try writer.print(", ", .{});
+                try writer.print("%{d}", .{t});
+            }
+            try writer.print(")\n", .{});
+        },
     }
 }
 
@@ -257,6 +300,8 @@ test "printModule smoke test" {
         .enum_variants    = &.{},
         .extern_fns       = &.{},
         .imported_fwd_decls = &.{},
+        .struct_defs      = &.{},
+        .tuple_returns    = &.{},
     };
     var buf: [512]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);

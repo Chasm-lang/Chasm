@@ -204,14 +204,17 @@ Chasm ships with a pre-built Raylib 5.5 static library for macOS at `engine/rayl
 ## CLI Reference
 
 ```
-chasm run <file.chasm>                        compile and run immediately
-chasm run <file.chasm> --engine raylib        compile and run with Raylib game window
-chasm run <file.chasm> --link libname         compile, link external library, and run
-chasm compile <file.chasm>                    compile to C (produces file.c + chasm_rt.h)
-chasm <file.chasm>                            compile to C (short form)
-chasm compare <old.chasm> <new.chasm>         show hot-reload diff between two versions
-chasm --watch <file.chasm>                    watch for changes, recompile, show reload diff
-chasm --version                               print version
+chasm run <file.chasm>                          compile and run immediately
+chasm run <file.chasm> --engine raylib          compile and run with Raylib game window
+chasm run <file.chasm> --engine raylib --watch  live hot-reload (recompiles on save)
+chasm run <file.chasm> --link libname           compile, link external library, and run
+chasm compile <file.chasm>                      compile to C (produces file.c + chasm_rt.h)
+chasm compile <file.chasm> --engine raylib      compile to C with Raylib header
+chasm <file.chasm>                              compile to C (short form)
+chasm <file.chasm> --target wasm                compile to WebAssembly Text Format (.wat + .html)
+chasm compare <old.chasm> <new.chasm>           show hot-reload diff between two versions
+chasm --watch <file.chasm>                      watch for changes, recompile, show reload diff
+chasm --version                                 print version
 ```
 
 ---
@@ -301,6 +304,22 @@ The return type annotation (`:: int`) is optional. If omitted, the compiler infe
 
 Function parameters always have explicit type annotations. The return lifetime is always inferred — it is at least as long as the longest-lived input.
 
+**Multiple return values** — functions can return a tuple of values:
+
+```chasm
+defp minmax(a :: int, b :: int) :: (int, int) do
+  return a, b
+end
+
+def on_tick() do
+  lo, hi = minmax(3, 7)
+  print(lo)   # 3
+  print(hi)   # 7
+end
+```
+
+The return type is written as `:: (type1, type2, ...)`. The caller destructures into separate variables with `x, y = call(...)`. The compiler generates a C struct (`ChRet_fnname`) internally — no heap allocation.
+
 ---
 
 ### Types
@@ -310,15 +329,20 @@ Function parameters always have explicit type annotations. The return lifetime i
 | `int` | 64-bit signed integer | `0`, `42`, `-7` |
 | `float` | 64-bit float | `0.0`, `3.14`, `-1.5` |
 | `bool` | Boolean | `true`, `false` |
-| `str` | Immutable string | `"hello"` |
+| `string` | Immutable UTF-8 string | `"hello"` |
 | `atom` | Compile-time symbol | `:idle`, `:running`, `:dead` |
+| `[]int` / `[]float` / `[]T` | Growable typed array | `array_new(8)` |
+| `strbuild` | Mutable string builder | `str_builder_new()` |
+| `StructName` | User-defined struct | `Vec2 { x: 0.0, y: 0.0 }` |
+| `EnumName` | Tagged enum (with optional payload) | `Color.Red` |
 
 Types are always written after `::`:
 
 ```chasm
 x :: int = 10
 label :: atom = :active
-name :: str = "chasm"
+name :: string = "chasm"
+buf :: strbuild = str_builder_new()
 ```
 
 ---
@@ -379,6 +403,43 @@ while i < 10 do
 end
 ```
 
+**for / in / do / end** — iterate over a range or array
+
+```chasm
+# Range iteration
+for i in 0..10 do
+  print(i)
+end
+
+# Array iteration
+for enemy in @enemies do
+  enemy.health = enemy.health - 1
+end
+```
+
+The loop variable is always `frame`-lifetime and is read-only from the outer perspective — it's a fresh binding each iteration.
+
+**break / continue** — early exit and skip in loops
+
+```chasm
+# break exits the nearest enclosing loop
+for i in 0..100 do
+  if i == 42 do
+    break
+  end
+end
+
+# continue skips the rest of the current iteration
+for i in 0..10 do
+  if i == 3 do
+    continue
+  end
+  print(i)   # prints 0, 1, 2, 4, 5, 6, 7, 8, 9
+end
+```
+
+Both `break` and `continue` work in `while` and `for/in` loops. They jump to the innermost enclosing loop.
+
 **case / when / end** — pattern matching on atoms
 
 ```chasm
@@ -396,7 +457,166 @@ The `_` arm is the catch-all. Chasm matches arms top to bottom and takes the fir
 
 ---
 
+### Arrays
+
+Arrays are growable, heap-backed sequences of values. They grow automatically when you push past their initial capacity.
+
+```chasm
+arr :: []int = array_new(4)   # initial cap 4, grows as needed
+
+arr.push(10)
+arr.push(20)
+arr.push(30)
+
+print(arr.len)    # 3
+print(arr[1])     # 20
+arr[0] = 99       # index write
+```
+
+**Method syntax** — arrays support dot-method calls:
+
+| Method / property | Equivalent function | Description |
+|---|---|---|
+| `arr.len` | `array_len(arr)` | Number of elements |
+| `arr.push(v)` | `array_push(arr, v)` | Append a value (grows if needed) |
+| `arr.pop()` | `array_pop(arr)` | Remove and return the last value |
+| `arr.clear()` | `array_clear(arr)` | Reset length to 0 (keeps capacity) |
+| `arr[i]` | `array_get(arr, i)` | Read element at index |
+| `arr[i] = v` | `array_set(arr, i, v)` | Write element at index |
+
+All function-call forms still work. Arrays use `malloc`/`realloc` for growth — they are not arena-backed, so they live until the process exits (or you discard the array variable).
+
+Array literals `[a, b, c]` desugar to `array_new` + `push` calls automatically.
+
+**Typed arrays** — annotate the element type with `[]TypeName` to get typed index expressions:
+
+```chasm
+positions :: []float = array_new(16)
+positions.push(3.14)
+x :: float = positions[0]   # inferred as float
+
+defstruct Vec2 do
+  x :: float
+  y :: float
+end
+vecs :: []Vec2 = array_new(8)   # generates typed C helpers
+```
+
+---
+
+### Strings
+
+Strings support dot-method syntax alongside the traditional function forms:
+
+```chasm
+s :: string = "hello world"
+
+print(s.len)            # 11
+print(s[0])             # 104  (byte value of 'h')
+sub :: string = s.slice(6, 11)   # "world"
+upper :: string = s.upper()
+ok :: bool = s.contains("world")
+```
+
+| Method / property | Returns | Description |
+|---|---|---|
+| `s.len` | `int` | Byte length |
+| `s[i]` | `int` | Byte value at index |
+| `s.slice(from, to)` | `string` | Substring `[from, to)` |
+| `s.concat(t)` | `string` | Concatenate |
+| `s.repeat(n)` | `string` | Repeat `n` times |
+| `s.upper()` | `string` | Uppercase copy |
+| `s.lower()` | `string` | Lowercase copy |
+| `s.trim()` | `string` | Strip leading/trailing whitespace |
+| `s.contains(sub)` | `bool` | Substring check |
+| `s.starts_with(pre)` | `bool` | Prefix check |
+| `s.ends_with(suf)` | `bool` | Suffix check |
+| `s.eq(t)` | `bool` | String equality |
+
+All `str_*` function forms still work (`str_len(s)`, `str_slice(s, from, to)`, etc.).
+
+String interpolation uses `"text #{expr} more"` — any expression is accepted inside `#{}`.
+
+### StringBuilder
+
+Use `StringBuilder` to build strings incrementally without intermediate allocations:
+
+```chasm
+b :: strbuild = str_builder_new()
+str_builder_append(b, "hello")
+str_builder_push(b, 32)          # space (byte value)
+str_builder_append(b, "world")
+result :: string = str_builder_build(b)   # "hello world"
+print(result.len)   # 11
+```
+
+| Function | Description |
+|---|---|
+| `str_builder_new()` | Create a new builder (heap-allocated, grows as needed) |
+| `str_builder_push(b, char)` | Append a single byte by integer value |
+| `str_builder_append(b, s)` | Append a string |
+| `str_builder_build(b)` | Finalize and return the string (copies to frame arena) |
+
+### File I/O
+
+```chasm
+file_write("/tmp/save.txt", "42")
+content :: string = file_read("/tmp/save.txt")
+print(content)        # "42"
+
+if file_exists("/tmp/save.txt") do
+  print(1)
+end
+```
+
+| Function | Returns | Description |
+|---|---|---|
+| `file_read(path)` | `string` | Read entire file; returns `""` on error. Buffer lives in persistent arena. |
+| `file_write(path, content)` | | Write string to file (overwrites) |
+| `file_exists(path)` | `bool` | Check whether file exists |
+
+### Enums
+
+Tag-only enums map to integer constants:
+
+```chasm
+enum State { Idle, Running, Dead }
+
+@state :: script = State.Idle
+
+def on_tick(dt :: float) do
+  match @state {
+    State.Idle    => print(0)
+    State.Running => print(1)
+    State.Dead    => print(2)
+  }
+end
+```
+
+Enums with **payload** carry data alongside the tag. Declare payload types inside parentheses after each variant name:
+
+```chasm
+enum Shape {
+  Circle(float),
+  Rect(float, float)
+}
+```
+
+Pattern matching on payload variants binds the payload fields into the arm scope:
+
+```chasm
+case shape do
+  Circle(r)    -> draw_circle(0.0, 0.0, r, 0xffffffff)
+  Rect(w, h)   -> draw_rect(0.0, 0.0, w, h, 0xffffffff)
+  _            -> print(0)
+end
+```
+
+Payload enums compile to C tagged unions. The tag is an `int64_t`; each variant's payload is a nested struct inside a `union`.
+
 ### Structs
+
+Structs are value types that compile directly to C structs. Field types are inferred from their annotations.
 
 ```chasm
 defstruct Vec2 do
@@ -410,7 +630,28 @@ defstruct Player do
 end
 ```
 
-Struct fields carry type annotations. The struct's lifetime is determined by where it is allocated.
+Create struct values with a struct literal:
+
+```chasm
+@player :: script = Player { health: 100, pos: Vec2 { x: 0.0, y: 0.0 } }
+```
+
+Read and write fields with `.`:
+
+```chasm
+def on_tick(dt :: float) do
+  @player.pos.x = @player.pos.x + 5.0
+  @player.health = @player.health - 1
+
+  if @player.health <= 0 do
+    @player = Player { health: 100, pos: Vec2 { x: 0.0, y: 0.0 } }
+  end
+end
+```
+
+Assigning to a field on a module attribute (`@player.pos.x = val`) automatically writes the modified struct back to the global — there is no separate "commit" step.
+
+Struct fields carry type annotations. The struct's lifetime is determined by where it is allocated (the outer variable's lifetime).
 
 ---
 
@@ -485,12 +726,64 @@ end
 | `deg_to_rad(d)` | `float` | Degrees to radians |
 | `rad_to_deg(r)` | `float` | Radians to degrees |
 
+**Arrays**
+
+| Function / syntax | Description |
+|---|---|
+| `array_new(cap)` | Allocate array with initial capacity (grows automatically) |
+| `arr.push(v)` / `array_push(arr, v)` | Append a value |
+| `arr.pop()` / `array_pop(arr)` | Remove and return the last value |
+| `arr[i]` / `array_get(arr, i)` | Read element at index |
+| `arr[i] = v` / `array_set(arr, i, v)` | Write element at index |
+| `arr.len` / `array_len(arr)` | Current element count |
+| `arr.clear()` / `array_clear(arr)` | Reset length to 0 (keeps capacity) |
+
+**Strings**
+
+| Function / syntax | Returns | Description |
+|---|---|---|
+| `s.len` / `str_len(s)` | `int` | Byte length |
+| `s[i]` / `str_char_at(s, i)` | `int` | Byte value at index |
+| `s.slice(from, to)` / `str_slice(s, from, to)` | `string` | Substring |
+| `s.concat(t)` / `str_concat(a, b)` | `string` | Concatenate |
+| `s.repeat(n)` / `str_repeat(s, n)` | `string` | Repeat `n` times |
+| `s.upper()` / `str_upper(s)` | `string` | Uppercase copy |
+| `s.lower()` / `str_lower(s)` | `string` | Lowercase copy |
+| `s.trim()` / `str_trim(s)` | `string` | Strip whitespace |
+| `s.contains(sub)` / `str_contains(s, sub)` | `bool` | Substring check |
+| `s.starts_with(p)` / `str_starts_with(s, p)` | `bool` | Prefix check |
+| `s.ends_with(p)` / `str_ends_with(s, p)` | `bool` | Suffix check |
+| `s.eq(t)` / `str_eq(a, b)` | `bool` | String equality |
+| `int_to_str(v)` | `string` | Integer → string |
+| `float_to_str(v)` | `string` | Float → string |
+| `bool_to_str(v)` | `string` | Bool → `"true"` or `"false"` |
+| `str_from_char(c)` | `string` | Byte value → 1-char string |
+
+**StringBuilder**
+
+| Function | Description |
+|---|---|
+| `str_builder_new()` | Create a new builder |
+| `str_builder_push(b, char_int)` | Append a byte by integer value |
+| `str_builder_append(b, s)` | Append a string |
+| `str_builder_build(b)` | Finalize and return the string |
+
+**File I/O**
+
+| Function | Returns | Description |
+|---|---|---|
+| `file_read(path)` | `string` | Read file contents (persistent arena) |
+| `file_write(path, content)` | | Overwrite file with string |
+| `file_exists(path)` | `bool` | Check whether file exists |
+
 **I/O**
 
 | Function | Description |
 |---|---|
 | `print(x)` | Print a value followed by a newline |
 | `log(x)` | Same as `print` (alias) |
+| `assert(cond)` | Abort if `cond` is false |
+| `todo()` | Mark a code path as unreachable (aborts) |
 
 ---
 
@@ -499,33 +792,48 @@ end
 This is the pattern Chasm is designed for. A host engine calls into Chasm scripts once per frame.
 
 ```chasm
-@position_x :: script = 0.0
-@position_y :: script = 0.0
-@velocity_x :: script = 1.0
-@velocity_y :: script = 0.0
-@high_score :: persistent = 0
+defstruct Vec2 do
+  x :: float
+  y :: float
+end
 
-defp move(x :: float, vx :: float, dt :: float) :: float do
-  x + vx * dt
+defstruct Enemy do
+  pos    :: Vec2
+  health :: int
+  speed  :: float
+end
+
+@player   :: script = Vec2 { x: 400.0, y: 300.0 }
+@enemies  :: script = [0, 0, 0, 0, 0, 0, 0, 0]   # handles or packed data
+@score    :: script = 0
+@hi_score :: persistent = 0
+
+defp move_toward(px :: float, tx :: float, spd :: float, dt :: float) :: float do
+  dx :: frame = tx - px
+  px + dx * spd * dt
 end
 
 def on_tick(dt :: float) do
-  # All intermediate values are frame-lifetime — free after this call
-  new_x :: frame = move(@position_x, @velocity_x, dt)
-  new_y :: frame = move(@position_y, @velocity_y, dt)
+  # Frame-lifetime — free after this tick, no GC needed
+  count :: frame = 0
 
-  # Explicit promotions — you see exactly what crosses into script memory
-  @position_x = copy_to_script(new_x)
-  @position_y = copy_to_script(new_y)
+  for i in 0..8 do
+    count = count + 1
+  end
+
+  @score = @score + count
+
+  # Field mutation on a module attr writes back automatically
+  @player.x = move_toward(@player.x, 400.0, 2.0, dt)
+  @player.y = move_toward(@player.y, 300.0, 2.0, dt)
 end
 
 def on_save() do
-  # Persist the score once at save time — one explicit cost, paid once
-  @high_score = persist_copy(@score)
+  @hi_score = persist_copy(@score)
 end
 ```
 
-The host calls `chasm_on_tick(ctx, dt)` once per frame. No GC. No hidden allocations. `new_x` and `new_y` live in the frame arena and are gone before the next frame begins.
+The host calls `chasm_on_tick(ctx, dt)` once per frame. No GC. No hidden allocations. All frame-lifetime values are gone before the next tick begins.
 
 ---
 
@@ -557,6 +865,37 @@ Watch mode does this automatically on every save:
 chasm --watch game.chasm
 ```
 
+**Live hot-reload with Raylib** keeps a game window open and swaps the script without restarting:
+
+```bash
+chasm run --engine raylib --watch game.chasm
+```
+
+Chasm compiles your script to a `.dylib`, loads it via `dlopen`, and polls the source file for changes. On save it recompiles and swaps the function pointers while the window stays open. State annotated `:: script` or `:: persistent` survives the swap; `:: frame` state is always fresh.
+
+---
+
+## WebAssembly
+
+Chasm can compile to [WebAssembly Text Format](https://webassembly.github.io/spec/core/text/index.html) (`.wat`), which assembles to `.wasm` with `wat2wasm`:
+
+```bash
+chasm --target wasm game.chasm
+```
+
+This produces:
+- `game.wat` — the WebAssembly module in text format
+- `game.html` — a ready-to-open HTML host page with Canvas2D bindings
+
+The HTML file provides a JavaScript environment that implements the `env` imports your script uses: `print`, math functions, and Canvas2D drawing primitives (`clear`, `draw_circle`, `draw_rect`, `draw_line`, `draw_text`). Open `game.html` in a browser with no server required.
+
+To assemble and run headlessly:
+
+```bash
+wat2wasm game.wat -o game.wasm
+node -e "const fs=require('fs'); WebAssembly.instantiate(fs.readFileSync('game.wasm'), {env:{print:console.log}}).then(m=>m.instance.exports.main())"
+```
+
 ---
 
 ## How Compilation Works
@@ -564,7 +903,7 @@ chasm --watch game.chasm
 Chasm compiles directly to C99. When you run `chasm game.chasm` you get:
 
 - `game.c` — the compiled module
-- `chasm_rt.h` — a small runtime header (~50 lines) with the arena types and helper macros
+- `chasm_rt.h` — the runtime header: arenas, growable arrays, string builder, file I/O, math, and all standard library functions
 
 The generated C is readable and embeds `ChasmCtx*` in every function signature so the host engine controls all memory. There are no global allocators, no hidden threads, no runtime dependencies beyond `libc`.
 
@@ -607,6 +946,7 @@ Features:
 - Syntax highlighting for `.chasm` files
 - Error diagnostics (red underlines on parse/type errors) via `chasm-lsp`
 - Hover to see inferred lifetime and type of any variable or attribute
+- Signature help — parameter hints pop up as you type a function call (triggered by `(` and `,`)
 - Auto-indent for `do`/`end` blocks
 
 The language server (`chasm-lsp`) runs the full compiler pipeline on every keystroke and reports errors in real time. It speaks LSP over stdio so it works with any editor that supports LSP.
@@ -642,6 +982,7 @@ src/
     ir.zig                  — three-address IR definition
     lower.zig               — AST → IR lowering pass
     codegen.zig             — IR → C99 code generator
+    codegen_wasm.zig        — IR → WebAssembly Text Format emitter
     reload.zig              — hot-reload diff engine
     diag.zig                — diagnostics + error rendering
   runtime/

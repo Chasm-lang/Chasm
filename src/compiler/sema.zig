@@ -44,6 +44,7 @@ pub const T_ATOM: TypeId    = 5;
 pub const T_VOID: TypeId    = 6;
 pub const T_ARRAY: TypeId   = 7;
 pub const T_ENUM_BASE: TypeId = 8; // All enum instances share a base int type
+pub const T_STRBUILDER: TypeId = 9; // StringBuilder type
 
 pub fn typeName(ty: TypeId) []const u8 {
     return switch (ty) {
@@ -54,20 +55,23 @@ pub fn typeName(ty: TypeId) []const u8 {
         T_STRING    => "string",
         T_ATOM      => "atom",
         T_VOID      => "void",
-        T_ARRAY     => "array",
-        T_ENUM_BASE => "enum",
-        else        => "user-defined",
+        T_ARRAY      => "array",
+        T_ENUM_BASE  => "enum",
+        T_STRBUILDER => "strbuild",
+        else         => "user-defined",
     };
 }
 
 /// Map Chasm type name strings to TypeIds.
 pub fn typeIdFromName(name: []const u8) TypeId {
-    if (std.mem.eql(u8, name, "int"))   return T_INT;
-    if (std.mem.eql(u8, name, "float")) return T_FLOAT;
-    if (std.mem.eql(u8, name, "bool"))  return T_BOOL;
-    if (std.mem.eql(u8, name, "str"))   return T_STRING;
-    if (std.mem.eql(u8, name, "string")) return T_STRING;
-    if (std.mem.eql(u8, name, "void"))  return T_VOID;
+    if (std.mem.eql(u8, name, "int"))      return T_INT;
+    if (std.mem.eql(u8, name, "float"))    return T_FLOAT;
+    if (std.mem.eql(u8, name, "bool"))     return T_BOOL;
+    if (std.mem.eql(u8, name, "str"))      return T_STRING;
+    if (std.mem.eql(u8, name, "string"))   return T_STRING;
+    if (std.mem.eql(u8, name, "void"))     return T_VOID;
+    if (std.mem.eql(u8, name, "atom"))     return T_ATOM;
+    if (std.mem.eql(u8, name, "strbuild")) return T_STRBUILDER;
     return T_UNKNOWN;
 }
 
@@ -146,8 +150,16 @@ pub const Sema = struct {
     scope_stack: std.ArrayListUnmanaged(*Scope),
     stats: SemaStats,
     allocator: std.mem.Allocator,
-    /// Enum declarations: name → list of variant names
-    enums: std.StringHashMapUnmanaged([][]const u8),
+    /// Enum declarations: name → list of variants
+    enums: std.StringHashMapUnmanaged([]ast_mod.EnumVariant),
+    /// Enum variant payload: "EnumName.VariantName" → []TypeId (one per payload field)
+    enum_variant_payloads: std.StringHashMapUnmanaged([]TypeId),
+    /// Struct type id map: struct name → TypeId
+    struct_type_ids: std.StringHashMapUnmanaged(TypeId),
+    /// Next struct type id to assign
+    next_struct_type_id: TypeId,
+    /// Flat field-type map: "StructName.fieldName" → TypeId
+    struct_field_types: std.StringHashMapUnmanaged(TypeId),
     /// Extern function table: name → c_name
     extern_fns: std.StringHashMapUnmanaged([]const u8),
     /// Visited import paths (for circular import detection).
@@ -158,6 +170,8 @@ pub const Sema = struct {
     imported_files: std.ArrayListUnmanaged([]const u8),
     /// Imported function signatures for forward declaration emission.
     imported_fn_sigs: std.ArrayListUnmanaged(ImportedFnSig),
+    /// Typed array element types: variable name → element TypeId (for []TypeName annotations).
+    array_elem_types: std.StringHashMapUnmanaged(TypeId),
 
     pub fn init(pool: *const AstPool, diags: *DiagList, allocator: std.mem.Allocator) Sema {
         return initWithFile(pool, diags, allocator, "");
@@ -174,11 +188,16 @@ pub const Sema = struct {
             .stats = .{},
             .allocator = allocator,
             .enums = .{},
+            .enum_variant_payloads = .{},
+            .struct_type_ids = .{},
+            .next_struct_type_id = 10, // after T_STRBUILDER = 9
+            .struct_field_types = .{},
             .extern_fns = .{},
             .visited = .{},
             .importing_file = file_path,
             .imported_files = .{},
             .imported_fn_sigs = .{},
+            .array_elem_types = .{},
         };
     }
 
@@ -192,6 +211,9 @@ pub const Sema = struct {
         }
         self.scope_stack.deinit(self.allocator);
         self.enums.deinit(self.allocator);
+        self.enum_variant_payloads.deinit(self.allocator);
+        self.struct_type_ids.deinit(self.allocator);
+        self.struct_field_types.deinit(self.allocator);
         self.extern_fns.deinit(self.allocator);
         self.visited.deinit(self.allocator);
         self.imported_files.deinit(self.allocator);
@@ -200,6 +222,7 @@ pub const Sema = struct {
             self.allocator.free(sig.param_type_ids);
         }
         self.imported_fn_sigs.deinit(self.allocator);
+        self.array_elem_types.deinit(self.allocator);
     }
 
     // ---- Scope management --------------------------------------------------
@@ -241,6 +264,16 @@ pub const Sema = struct {
 
     pub fn lifetimeOf(self: *const Sema, idx: NodeIndex) Lifetime {
         return self.lt_table.lifetimeOf(idx);
+    }
+
+    pub fn typeIdForStruct(self: *const Sema, name: []const u8) TypeId {
+        return self.struct_type_ids.get(name) orelse T_UNKNOWN;
+    }
+
+    pub fn typeIdFromNameDynamic(self: *const Sema, name: []const u8) TypeId {
+        const builtin_id = typeIdFromName(name);
+        if (builtin_id != T_UNKNOWN) return builtin_id;
+        return self.struct_type_ids.get(name) orelse T_UNKNOWN;
     }
 
     // ---- Constraint helpers ------------------------------------------------
@@ -371,6 +404,7 @@ pub const Sema = struct {
             .{ .name = "str_eq",         .type_id = T_BOOL   },
             .{ .name = "int_to_str",     .type_id = T_STRING },
             .{ .name = "float_to_str",   .type_id = T_STRING },
+            .{ .name = "bool_to_str",    .type_id = T_STRING },
 
             // ---- type conversion --------------------------------------------
             .{ .name = "to_int",   .type_id = T_INT   }, // truncate float → int
@@ -406,6 +440,17 @@ pub const Sema = struct {
             .{ .name = "assert",     .type_id = T_VOID },
             .{ .name = "assert_eq",  .type_id = T_VOID }, // assert_eq(a, b)
             .{ .name = "todo",       .type_id = T_VOID }, // marks unreachable
+
+            // ---- file i/o ---------------------------------------------------
+            .{ .name = "file_read",   .type_id = T_STRING },
+            .{ .name = "file_write",  .type_id = T_VOID   },
+            .{ .name = "file_exists", .type_id = T_BOOL   },
+
+            // ---- string builder ---------------------------------------------
+            .{ .name = "str_builder_new",    .type_id = T_STRBUILDER },
+            .{ .name = "str_builder_push",   .type_id = T_VOID       },
+            .{ .name = "str_builder_append", .type_id = T_VOID       },
+            .{ .name = "str_builder_build",  .type_id = T_STRING     },
         };
         for (builtins) |b| {
             try self.module_scope.define(self.allocator, .{
@@ -423,17 +468,50 @@ pub const Sema = struct {
         _ = try self.lt_table.ensureNode(idx);
         switch (self.pool.get(idx).*) {
             .fn_decl => |f| {
+                // If the return type is a tuple, assign a synthetic struct type_id
+                // for the ChRet_<name> C struct, so call results are typed correctly.
+                const ret_type_id: TypeId = if (f.ret_ty) |rty| blk: {
+                    if (self.pool.get(rty).* == .tuple_type) {
+                        const synthetic_name = try std.fmt.allocPrint(self.allocator, "ChRet_{s}", .{f.name});
+                        const type_id = self.next_struct_type_id;
+                        self.next_struct_type_id += 1;
+                        try self.struct_type_ids.put(self.allocator, synthetic_name, type_id);
+                        break :blk type_id;
+                    }
+                    // Resolve named return type if present
+                    switch (self.pool.get(rty).*) {
+                        .type_ref  => |tr| break :blk self.typeIdFromNameDynamic(tr.name),
+                        .ident     => |id| break :blk self.typeIdFromNameDynamic(id.name),
+                        .array_type => break :blk T_ARRAY,
+                        else => {},
+                    }
+                    break :blk T_UNKNOWN;
+                } else T_VOID; // no return type annotation → void
                 try self.module_scope.define(self.allocator, .{
                     .name     = f.name,
-                    .type_id  = T_UNKNOWN,
+                    .type_id  = ret_type_id,
                     .lifetime = .frame,
                     .node_idx = idx,
                 });
             },
             .struct_decl => |s| {
+                const type_id = self.next_struct_type_id;
+                self.next_struct_type_id += 1;
+                try self.struct_type_ids.put(self.allocator, s.name, type_id);
+                // Register field types as "StructName.fieldName" → TypeId.
+                for (s.fields) |field| {
+                    const field_type_id: TypeId = if (field.ty) |ty_idx| blk: {
+                        switch (self.pool.get(ty_idx).*) {
+                            .type_ref => |tr| break :blk self.typeIdFromNameDynamic(tr.name),
+                            else => break :blk T_UNKNOWN,
+                        }
+                    } else T_UNKNOWN;
+                    const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ s.name, field.name });
+                    try self.struct_field_types.put(self.allocator, key, field_type_id);
+                }
                 try self.module_scope.define(self.allocator, .{
                     .name     = s.name,
-                    .type_id  = T_UNKNOWN,
+                    .type_id  = type_id,
                     .lifetime = .frame,
                     .node_idx = idx,
                 });
@@ -459,7 +537,7 @@ pub const Sema = struct {
                 });
                 // Register each variant as a constant with its index.
                 for (e.variants, 0..) |variant, vi| {
-                    const qname = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ e.name, variant });
+                    const qname = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ e.name, variant.name });
                     try self.module_scope.define(self.allocator, .{
                         .name     = qname,
                         .type_id  = T_ENUM_BASE,
@@ -467,6 +545,15 @@ pub const Sema = struct {
                         .node_idx = idx,
                     });
                     _ = vi;
+                    // Register payload types if any.
+                    if (variant.payload_types.len > 0) {
+                        var payload_ids = try self.allocator.alloc(TypeId, variant.payload_types.len);
+                        for (variant.payload_types, 0..) |ty_name, ti| {
+                            payload_ids[ti] = self.typeIdFromNameDynamic(ty_name);
+                        }
+                        const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ e.name, variant.name });
+                        try self.enum_variant_payloads.put(self.allocator, key, payload_ids);
+                    }
                 }
             },
             .extern_decl => |ex| {
@@ -621,7 +708,7 @@ pub const Sema = struct {
                         break :blk T_VOID;
                     } else T_VOID;
                     try self.imported_fn_sigs.append(self.allocator, .{
-                        .name = try self.allocator.dupe(u8, f.name),
+                        .name = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ mod_name, f.name }),
                         .ret_type_id = ret_id,
                         .param_type_ids = param_ids,
                     });
@@ -637,11 +724,26 @@ pub const Sema = struct {
         defer self.popScope();
         for (f.params) |param| {
             const lt = resolveLifetime(param.lifetime, .frame);
+            // Resolve declared parameter type from annotation if present.
+            const param_type_id: TypeId = if (param.ty) |ty_idx| blk: {
+                switch (self.pool.get(ty_idx).*) {
+                    .ident    => |id| break :blk self.typeIdFromNameDynamic(id.name),
+                    .type_ref => |tr| break :blk self.typeIdFromNameDynamic(tr.name),
+                    .array_type => |at| {
+                        // Register elem type for this param so method dispatch works.
+                        const elem_ty = self.typeIdFromNameDynamic(at.elem_name);
+                        try self.array_elem_types.put(self.allocator, param.name, elem_ty);
+                        break :blk T_ARRAY;
+                    },
+                    else => {},
+                }
+                break :blk T_UNKNOWN;
+            } else T_UNKNOWN;
             try self.currentScope().define(self.allocator, .{
                 .name     = param.name,
-                .type_id  = T_UNKNOWN,
+                .type_id  = param_type_id,
                 .lifetime = lt,
-                .node_idx = ast_mod.invalid_node, // params have no dedicated AST node
+                .node_idx = ast_mod.invalid_node,
             });
         }
         try self.analyzeBlock(f.body);
@@ -667,6 +769,19 @@ pub const Sema = struct {
             .return_stmt => |rs| {
                 if (rs.value != ast_mod.invalid_node) _ = try self.analyzeExpr(rs.value);
             },
+            .multi_assign => |ma| {
+                _ = try self.analyzeExpr(ma.value);
+                for (ma.targets) |target_name| {
+                    if (self.currentScope().lookup(target_name) == null) {
+                        try self.currentScope().define(self.allocator, .{
+                            .name     = target_name,
+                            .type_id  = T_UNKNOWN,
+                            .lifetime = .frame,
+                            .node_idx = ast_mod.invalid_node,
+                        });
+                    }
+                }
+            },
             .expr_stmt => |es| _ = try self.analyzeExpr(es.expr),
             .block     => try self.analyzeBlock(idx),
             else       => {},
@@ -682,6 +797,15 @@ pub const Sema = struct {
         try self.atLeast(idx, lt);
         // The init expression must flow into the declaration's lifetime.
         try self.flowsTo(vd.init, idx, vd.span);
+
+        // If there's an array_type annotation ([]ElemType), record the element type.
+        if (vd.ty) |ty_idx| {
+            if (self.pool.get(ty_idx).* == .array_type) {
+                const at = self.pool.get(ty_idx).array_type;
+                const elem_type_id = self.typeIdFromNameDynamic(at.elem_name);
+                try self.array_elem_types.put(self.allocator, vd.name, elem_type_id);
+            }
+        }
 
         try self.currentScope().define(self.allocator, .{
             .name     = vd.name,
@@ -803,6 +927,8 @@ pub const Sema = struct {
                 // Check for namespaced call: `module.fn(args)` resolves via module table.
                 if (self.pool.get(c.callee).* == .field_access) {
                     const fa = self.pool.get(c.callee).field_access;
+                    // Module-qualified call check MUST come before analyzeExpr(fa.object)
+                    // so that bare module names (e.g. `utils`) never hit analyzeIdent.
                     if (self.pool.get(fa.object).* == .ident) {
                         const obj_name = self.pool.get(fa.object).ident.name;
                         const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ obj_name, fa.field });
@@ -811,8 +937,56 @@ pub const Sema = struct {
                             self.stats.symbols_resolved += 1;
                             try self.atLeast(c.callee, sym.lifetime);
                             try self.setNodeType(c.callee, sym.type_id);
+                            // Also propagate to the call node itself so hover works.
+                            try self.setNodeType(idx, sym.type_id);
+                            try self.atLeast(idx, sym.lifetime);
                             for (c.args) |a| _ = try self.analyzeExpr(a);
                             return sym.type_id;
+                        }
+                    }
+                    // Not a module call; compute obj type for string/array/struct method dispatch.
+                    const obj_ty_for_method: TypeId = blk: {
+                        const existing = self.nodeType(fa.object);
+                        if (existing != T_UNKNOWN) break :blk existing;
+                        _ = try self.lt_table.ensureNode(fa.object);
+                        break :blk try self.analyzeExpr(fa.object);
+                    };
+                    if (self.pool.get(fa.object).* == .ident) {
+                        // String method sugar: s.slice(from, to), s.contains(sub), etc.
+                        if (obj_ty_for_method == T_STRING) {
+                            for (c.args) |a| _ = try self.analyzeExpr(a);
+                            if (std.mem.eql(u8, fa.field, "slice"))        return T_STRING;
+                            if (std.mem.eql(u8, fa.field, "concat"))       return T_STRING;
+                            if (std.mem.eql(u8, fa.field, "contains"))     return T_BOOL;
+                            if (std.mem.eql(u8, fa.field, "starts_with"))  return T_BOOL;
+                            if (std.mem.eql(u8, fa.field, "ends_with"))    return T_BOOL;
+                            if (std.mem.eql(u8, fa.field, "upper"))        return T_STRING;
+                            if (std.mem.eql(u8, fa.field, "lower"))        return T_STRING;
+                            if (std.mem.eql(u8, fa.field, "trim"))         return T_STRING;
+                            if (std.mem.eql(u8, fa.field, "repeat"))       return T_STRING;
+                            if (std.mem.eql(u8, fa.field, "eq"))           return T_BOOL;
+                        }
+                        // Array method sugar: arr.push(v), arr.get(i), arr.pop(), arr.clear()
+                        if (obj_ty_for_method == T_ARRAY) {
+                            for (c.args) |a| _ = try self.analyzeExpr(a);
+                            if (std.mem.eql(u8, fa.field, "push"))  return T_VOID;
+                            if (std.mem.eql(u8, fa.field, "set"))   return T_VOID;
+                            if (std.mem.eql(u8, fa.field, "pop"))   return T_INT;
+                            if (std.mem.eql(u8, fa.field, "clear")) return T_VOID;
+                            if (std.mem.eql(u8, fa.field, "get")) {
+                                // Return element type if known (struct array)
+                                const var_name: ?[]const u8 = switch (self.pool.get(fa.object).*) {
+                                    .ident    => |id| id.name,
+                                    .attr_ref => |ar| ar.name,
+                                    else => null,
+                                };
+                                if (var_name) |vn| {
+                                    if (self.array_elem_types.get(vn)) |elem_ty| {
+                                        return elem_ty;
+                                    }
+                                }
+                                return T_UNKNOWN;
+                            }
                         }
                     }
                 }
@@ -823,12 +997,40 @@ pub const Sema = struct {
                 return if (callee_ty != T_UNKNOWN) callee_ty else T_UNKNOWN;
             },
             .field_access => |fa| {
-                _ = try self.analyzeExpr(fa.object);
+                const obj_ty = try self.analyzeExpr(fa.object);
+                // String method sugar: s.len
+                if (obj_ty == T_STRING and std.mem.eql(u8, fa.field, "len")) return T_INT;
+                // Array method sugar: arr.len
+                if (obj_ty == T_ARRAY and std.mem.eql(u8, fa.field, "len")) return T_INT;
+                // If the object has a known struct type, look up the field's type.
+                if (obj_ty >= 10) {
+                    // Find struct name from type_id.
+                    var it = self.struct_type_ids.iterator();
+                    while (it.next()) |entry| {
+                        if (entry.value_ptr.* == obj_ty) {
+                            const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ entry.key_ptr.*, fa.field });
+                            defer self.allocator.free(key);
+                            if (self.struct_field_types.get(key)) |fty| return fty;
+                            break;
+                        }
+                    }
+                }
                 return T_UNKNOWN;
             },
             .index => |ix| {
                 _ = try self.analyzeExpr(ix.array);
                 _ = try self.analyzeExpr(ix.idx);
+                // String indexing: s[i] → int (byte value)
+                const arr_ty = self.nodeType(ix.array);
+                if (arr_ty == T_STRING) return T_INT;
+                // If the array base is an ident with a known element type, return it.
+                if (self.pool.get(ix.array).* == .ident) {
+                    const arr_name = self.pool.get(ix.array).ident.name;
+                    if (self.array_elem_types.get(arr_name)) |elem_ty| return elem_ty;
+                } else if (self.pool.get(ix.array).* == .attr_ref) {
+                    const arr_name = self.pool.get(ix.array).attr_ref.name;
+                    if (self.array_elem_types.get(arr_name)) |elem_ty| return elem_ty;
+                }
                 return T_UNKNOWN;
             },
 
@@ -895,7 +1097,7 @@ pub const Sema = struct {
             // ---- Struct literal --------------------------------------------
             .struct_lit => |sl| {
                 for (sl.fields) |f| _ = try self.analyzeExpr(f.value);
-                return T_UNKNOWN;
+                return self.typeIdForStruct(sl.type_name);
             },
 
             // ---- Nested block ----------------------------------------------
@@ -908,7 +1110,15 @@ pub const Sema = struct {
             .promote => |p| return self.analyzeExpr(p.src),
 
             // ---- Pattern nodes appearing in expression position ------------
-            .pattern_bind, .pattern_wildcard, .pattern_atom, .pattern_lit => return T_UNKNOWN,
+            .pattern_bind, .pattern_wildcard, .pattern_atom, .pattern_lit, .pattern_variant => return T_UNKNOWN,
+
+            // ---- Tuple nodes -----------------------------------------------
+            .tuple_lit => |tl| {
+                for (tl.values) |v| _ = try self.analyzeExpr(v);
+                return T_UNKNOWN; // tuple itself has no single type
+            },
+            .tuple_type => return T_UNKNOWN,
+            .array_type => return T_UNKNOWN,
 
             else => return T_UNKNOWN,
         }
@@ -954,6 +1164,18 @@ pub const Sema = struct {
                 self.stats.symbols_resolved += 1;
             },
             .pattern_lit => |pl| _ = try self.analyzeExpr(pl.inner),
+            .pattern_variant => |pv| {
+                // Define all bindings in the arm's scope with T_UNKNOWN type.
+                for (pv.bindings) |binding_name| {
+                    try self.currentScope().define(self.allocator, .{
+                        .name     = binding_name,
+                        .type_id  = T_UNKNOWN,
+                        .lifetime = .frame,
+                        .node_idx = idx,
+                    });
+                    self.stats.symbols_resolved += 1;
+                }
+            },
             else => {},
         }
     }

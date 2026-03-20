@@ -12,9 +12,6 @@ pub fn resolve(
     import_path: []const u8,
     alloc: std.mem.Allocator,
 ) ![]const u8 {
-    // Get directory of the importing file.
-    const dir = std.fs.path.dirname(importing_file) orelse ".";
-
     // Append .chasm extension if not present.
     const needs_ext = !std.mem.endsWith(u8, import_path, ".chasm");
     const with_ext = if (needs_ext)
@@ -23,8 +20,14 @@ pub fn resolve(
         try alloc.dupe(u8, import_path);
     defer alloc.free(with_ext);
 
-    // Join directory with the import path.
-    const joined = try std.fs.path.join(alloc, &.{ dir, with_ext });
+    // Absolute import paths are used as-is (no directory joining).
+    const joined = if (std.fs.path.isAbsolute(with_ext))
+        try alloc.dupe(u8, with_ext)
+    else blk: {
+        // Get directory of the importing file and join.
+        const dir = std.fs.path.dirname(importing_file) orelse ".";
+        break :blk try std.fs.path.join(alloc, &.{ dir, with_ext });
+    };
     errdefer alloc.free(joined);
 
     // Attempt to resolve to an absolute path; on failure return the joined path.

@@ -66,6 +66,11 @@ const LowerScope = struct {
 // Lowerer
 // ---------------------------------------------------------------------------
 
+const LoopEntry = struct {
+    cond_lbl:  LabelId,
+    after_lbl: LabelId,
+};
+
 pub const Lowerer = struct {
     pool:      *const AstPool,
     sema:      *const Sema,
@@ -79,6 +84,10 @@ pub const Lowerer = struct {
     next_temp:  TempId,
     next_label: LabelId,
     scope_stack: std.ArrayListUnmanaged(*LowerScope),
+    /// Stack of enclosing loops — top entry is the innermost loop.
+    loop_stack: std.ArrayListUnmanaged(LoopEntry),
+    /// Name of the function currently being lowered (for multi-return).
+    current_fn_name: []const u8,
 
     pub fn init(pool: *const AstPool, sema: *const Sema, allocator: std.mem.Allocator) Lowerer {
         return .{
@@ -90,6 +99,8 @@ pub const Lowerer = struct {
             .next_temp   = 0,
             .next_label  = 0,
             .scope_stack = .{},
+            .loop_stack  = .{},
+            .current_fn_name = "",
             .imported_fwd_decls = .{},
         };
     }
@@ -97,6 +108,7 @@ pub const Lowerer = struct {
     pub fn deinit(self: *Lowerer) void {
         self.instrs.deinit(self.allocator);
         self.temps.deinit(self.allocator);
+        self.loop_stack.deinit(self.allocator);
         for (self.scope_stack.items) |s| {
             s.deinit(self.allocator);
             self.allocator.destroy(s);
@@ -112,6 +124,8 @@ pub const Lowerer = struct {
         var attrs         = std.ArrayListUnmanaged(IrAttr){};
         var enum_variants = std.ArrayListUnmanaged(ir_mod.IrEnumVariant){};
         var extern_fns    = std.ArrayListUnmanaged(ir_mod.IrExternFn){};
+        var struct_defs   = std.ArrayListUnmanaged(ir_mod.IrStructDef){};
+        var tuple_returns = std.ArrayListUnmanaged(ir_mod.IrTupleReturn){};
 
         // Collect attr init instructions into a separate stream.
         var init_instrs = std.ArrayListUnmanaged(Instr){};
@@ -119,15 +133,71 @@ pub const Lowerer = struct {
 
         for (top_level) |idx| {
             switch (self.pool.get(idx).*) {
-                .fn_decl    => try functions.append(self.allocator, try self.lowerFnDecl(idx)),
+                .fn_decl    => {
+                    // Before lowering, check if this is a multi-return function.
+                    const fn_node = self.pool.get(idx).fn_decl;
+                    if (fn_node.ret_ty) |ret_ty_idx| {
+                        if (self.pool.get(ret_ty_idx).* == .tuple_type) {
+                            const tt = self.pool.get(ret_ty_idx).tuple_type;
+                            var type_ids = std.ArrayListUnmanaged(u32){};
+                            for (tt.types) |ty_idx| {
+                                const tid: u32 = switch (self.pool.get(ty_idx).*) {
+                                    .type_ref => |tr| sema_mod.typeIdFromName(tr.name),
+                                    else => 0,
+                                };
+                                try type_ids.append(self.allocator, tid);
+                            }
+                            const owned_type_ids = try type_ids.toOwnedSlice(self.allocator);
+                            try tuple_returns.append(self.allocator, .{
+                                .fn_name = fn_node.name,
+                                .type_ids = owned_type_ids,
+                            });
+                            // Create a synthetic IrStructDef for ChRet_<name> so that
+                            // `cTypeOf` returns the right C type for the call result temp.
+                            const struct_name = try std.fmt.allocPrint(self.allocator, "ChRet_{s}", .{fn_node.name});
+                            const struct_type_id = self.sema.typeIdForStruct(struct_name);
+                            var fields = std.ArrayListUnmanaged(ir_mod.IrStructField){};
+                            for (owned_type_ids, 0..) |tid, fi| {
+                                const fname = try std.fmt.allocPrint(self.allocator, "v{d}", .{fi});
+                                try fields.append(self.allocator, .{ .name = fname, .type_id = tid });
+                            }
+                            try struct_defs.append(self.allocator, .{
+                                .name = struct_name,
+                                .type_id = struct_type_id,
+                                .fields = try fields.toOwnedSlice(self.allocator),
+                            });
+                        }
+                    }
+                    try functions.append(self.allocator, try self.lowerFnDecl(idx));
+                },
                 .attr_decl  => try attrs.append(self.allocator,
                     try self.lowerAttrDecl(idx, &init_instrs, &init_temps)),
-                .struct_decl => {}, // struct layout handled by codegen, no IR needed yet
+                .struct_decl => |s| {
+                    const type_id = self.sema.typeIdForStruct(s.name);
+                    var fields = std.ArrayListUnmanaged(ir_mod.IrStructField){};
+                    for (s.fields) |field| {
+                        const field_type_id: u32 = if (field.ty) |ty_idx| blk: {
+                            switch (self.pool.get(ty_idx).*) {
+                                .type_ref => |tr| break :blk self.sema.typeIdFromNameDynamic(tr.name),
+                                else => break :blk @as(u32, 0),
+                            }
+                        } else @as(u32, 0);
+                        try fields.append(self.allocator, .{
+                            .name = field.name,
+                            .type_id = field_type_id,
+                        });
+                    }
+                    try struct_defs.append(self.allocator, .{
+                        .name = s.name,
+                        .type_id = type_id,
+                        .fields = try fields.toOwnedSlice(self.allocator),
+                    });
+                },
                 .enum_decl  => |e| {
                     for (e.variants, 0..) |v, i| {
                         try enum_variants.append(self.allocator, .{
                             .enum_name    = e.name,
-                            .variant_name = v,
+                            .variant_name = v.name,
                             .index        = @intCast(i),
                         });
                     }
@@ -165,6 +235,8 @@ pub const Lowerer = struct {
             .enum_variants      = try enum_variants.toOwnedSlice(self.allocator),
             .extern_fns         = try extern_fns.toOwnedSlice(self.allocator),
             .imported_fwd_decls = try imported_fwd.toOwnedSlice(self.allocator),
+            .struct_defs        = try struct_defs.toOwnedSlice(self.allocator),
+            .tuple_returns      = try tuple_returns.toOwnedSlice(self.allocator),
         };
     }
 
@@ -186,6 +258,9 @@ pub const Lowerer = struct {
     fn lowerFnDecl(self: *Lowerer, idx: NodeIndex) !IrFunction {
         const f = self.pool.get(idx).fn_decl;
 
+        // Track the current function name for multi-return instructions.
+        self.current_fn_name = f.name;
+
         // Reset per-function state.
         self.instrs.clearRetainingCapacity();
         self.temps.clearRetainingCapacity();
@@ -202,8 +277,10 @@ pub const Lowerer = struct {
             const lt = resolveLifetime(p.lifetime, .frame);
             const type_id: u32 = if (p.ty) |ty_idx| blk: {
                 switch (self.pool.get(ty_idx).*) {
-                    .type_ref => |tr| break :blk sema_mod.typeIdFromName(tr.name),
-                    else      => break :blk @as(u32, 0),
+                    .ident      => |id| break :blk self.sema.typeIdFromNameDynamic(id.name),
+                    .type_ref   => |tr| break :blk self.sema.typeIdFromNameDynamic(tr.name),
+                    .array_type => break :blk sema_mod.T_ARRAY,
+                    else        => break :blk @as(u32, 0),
                 }
             } else @as(u32, 0);
             const t  = try self.freshTemp(lt, type_id);
@@ -280,10 +357,49 @@ pub const Lowerer = struct {
             .for_in     => try self.lowerForIn(idx),
             .return_stmt => |rs| {
                 if (rs.value != ast_mod.invalid_node) {
-                    const t = try self.lowerExpr(rs.value);
-                    try self.emit(.{ .ret = t });
+                    // Check if it's a tuple return: `return x, y` → tuple_lit or multiple exprs.
+                    if (self.pool.get(rs.value).* == .tuple_lit) {
+                        const tl = self.pool.get(rs.value).tuple_lit;
+                        var vals = std.ArrayListUnmanaged(TempId){};
+                        for (tl.values) |v| try vals.append(self.allocator, try self.lowerExpr(v));
+                        try self.emit(.{ .ret_tuple = .{
+                            .fn_name = self.current_fn_name,
+                            .values  = try vals.toOwnedSlice(self.allocator),
+                        } });
+                    } else {
+                        const t = try self.lowerExpr(rs.value);
+                        try self.emit(.{ .ret = t });
+                    }
                 } else {
                     try self.emit(.ret_void);
+                }
+            },
+            .multi_assign => |ma| {
+                // x, y = f()  →  call f into a multi-return temp, then extract fields.
+                const call_t = try self.lowerExpr(ma.value);
+                for (ma.targets, 0..) |target_name, field_idx| {
+                    const field_name = try std.fmt.allocPrint(self.allocator, "v{d}", .{field_idx});
+                    const field_t = try self.freshTemp(.frame, 0);
+                    try self.emit(.{ .field_get = .{ .dest = field_t, .object = call_t, .field = field_name } });
+                    if ((self.currentScope()).lookup(target_name)) |existing_t| {
+                        if (field_t != existing_t) {
+                            try self.emit(.{ .copy = .{ .dest = existing_t, .src = field_t } });
+                        }
+                    } else {
+                        try (self.currentScope()).define(self.allocator, target_name, field_t);
+                    }
+                }
+            },
+            .break_stmt => {
+                if (self.loop_stack.items.len > 0) {
+                    const entry = self.loop_stack.items[self.loop_stack.items.len - 1];
+                    try self.emit(.{ .jump = entry.after_lbl });
+                }
+            },
+            .continue_stmt => {
+                if (self.loop_stack.items.len > 0) {
+                    const entry = self.loop_stack.items[self.loop_stack.items.len - 1];
+                    try self.emit(.{ .jump = entry.cond_lbl });
                 }
             },
             .expr_stmt  => |es| _ = try self.lowerExpr(es.expr),
@@ -319,15 +435,19 @@ pub const Lowerer = struct {
         switch (self.pool.get(a.target).*) {
             .ident => |id| {
                 if ((self.currentScope()).lookup(id.name)) |existing_t| {
-                    // Re-assignment: update in place.
-                    _ = (self.currentScope()).update(id.name, val_t);
-                    _ = existing_t; // suppress unused warning
+                    // Re-assignment: copy new value into the canonical temp so that
+                    // subsequent reads (including loop back-edges) see the updated value.
+                    if (val_t != existing_t) {
+                        try self.emit(.{ .copy = .{ .dest = existing_t, .src = val_t } });
+                    }
+                    // Keep scope pointing to existing_t (it now holds the new value).
                 } else {
-                    // Implicit binding — infer lifetime from value.
-                    const lt = self.temps.items[val_t].lifetime;
-                    _ = self.lt_of_temp(val_t); // note the inferred lifetime
-                    try (self.currentScope()).define(self.allocator, id.name, val_t);
-                    _ = lt;
+                    // Implicit binding — allocate a fresh temp and copy, so that
+                    // future updates to the source variable don't affect this binding.
+                    const src_temp = self.temps.items[val_t];
+                    const fresh_t  = try self.freshTemp(src_temp.lifetime, src_temp.type_id);
+                    try self.emit(.{ .copy = .{ .dest = fresh_t, .src = val_t } });
+                    try (self.currentScope()).define(self.allocator, id.name, fresh_t);
                 }
             },
             .attr_ref => |ar| {
@@ -341,6 +461,33 @@ pub const Lowerer = struct {
             .field_access => |fa| {
                 const obj_t = try self.lowerExpr(fa.object);
                 try self.emit(.{ .field_set = .{ .object = obj_t, .field = fa.field, .src = val_t } });
+                // If the object is a module attr, write the modified struct back.
+                if (self.pool.get(fa.object).* == .attr_ref) {
+                    const ar = self.pool.get(fa.object).attr_ref;
+                    const lt = if (self.sema.module_scope.symbols.get(ar.name)) |sym|
+                        sym.lifetime
+                    else
+                        .script;
+                    try self.emit(.{ .store_attr = .{ .name = ar.name, .src = obj_t, .lifetime = lt } });
+                }
+            },
+            .index => |ix| {
+                const arr_t = try self.lowerExpr(ix.array);
+                const idx_t = try self.lowerExpr(ix.idx);
+                const set_args = try self.allocator.dupe(TempId, &.{ arr_t, idx_t, val_t });
+                // Use a typed setter if the value is a struct type (type_id >= 9).
+                const val_type_id = if (val_t < self.temps.items.len) self.temps.items[val_t].type_id else @as(u32, 0);
+                const setter = if (val_type_id >= 10) blk: {
+                    var it = self.sema.struct_type_ids.iterator();
+                    while (it.next()) |entry| {
+                        if (entry.value_ptr.* == val_type_id) {
+                            const name = try std.fmt.allocPrint(self.allocator, "array_set_{s}", .{entry.key_ptr.*});
+                            break :blk name;
+                        }
+                    }
+                    break :blk @as([]const u8, "array_set");
+                } else "array_set";
+                try self.emit(.{ .call = .{ .dest = ir_mod.invalid_temp, .callee = setter, .args = set_args } });
             },
             else => {
                 // Unsupported target — silently lower the expr for side-effects.
@@ -374,6 +521,8 @@ pub const Lowerer = struct {
         const body_lbl  = self.freshLabel();
         const after_lbl = self.freshLabel();
 
+        try self.loop_stack.append(self.allocator, .{ .cond_lbl = cond_lbl, .after_lbl = after_lbl });
+
         try self.emit(.{ .jump = cond_lbl });
         try self.emit(.{ .label = cond_lbl });
         const cond_t = try self.lowerExpr(ws.cond);
@@ -384,6 +533,7 @@ pub const Lowerer = struct {
         try self.emit(.{ .jump = cond_lbl });
 
         try self.emit(.{ .label = after_lbl });
+        _ = self.loop_stack.pop();
     }
 
     fn lowerForIn(self: *Lowerer, idx: NodeIndex) anyerror!void {
@@ -392,52 +542,76 @@ pub const Lowerer = struct {
         const body_lbl  = self.freshLabel();
         const after_lbl = self.freshLabel();
 
+        try self.loop_stack.append(self.allocator, .{ .cond_lbl = cond_lbl, .after_lbl = after_lbl });
+
         // Lower the iter expression; if it's a range, extract lo and hi.
         const iter_node = self.pool.get(fi.iter);
-        const loop_var_t: TempId = blk: {
-            switch (iter_node.*) {
-                .range => |r| {
-                    const lo_t = try self.lowerExpr(r.lo);
-                    const hi_t = try self.lowerExpr(r.hi);
-                    // loop var = lo
-                    const var_t = try self.freshTemp(.frame, sema_mod.T_INT);
-                    try self.emit(.{ .copy = .{ .dest = var_t, .src = lo_t } });
-                    // Define loop var in scope (push scope, will be shared with body)
-                    try self.pushScope();
-                    try (self.currentScope()).define(self.allocator, fi.var_name, var_t);
+        switch (iter_node.*) {
+            .range => |r| {
+                const lo_t = try self.lowerExpr(r.lo);
+                const hi_t = try self.lowerExpr(r.hi);
+                const var_t = try self.freshTemp(.frame, sema_mod.T_INT);
+                try self.emit(.{ .copy = .{ .dest = var_t, .src = lo_t } });
+                try self.pushScope();
+                try (self.currentScope()).define(self.allocator, fi.var_name, var_t);
 
+                try self.emit(.{ .jump = cond_lbl });
+                try self.emit(.{ .label = cond_lbl });
+                const cmp_t = try self.freshTemp(.frame, sema_mod.T_BOOL);
+                try self.emit(.{ .binary = .{ .dest = cmp_t, .op = .lt, .left = var_t, .right = hi_t } });
+                try self.emit(.{ .branch = .{ .cond = cmp_t, .then_lbl = body_lbl, .else_lbl = after_lbl } });
+
+                try self.emit(.{ .label = body_lbl });
+                const body_block = self.pool.get(fi.body).block;
+                for (body_block.stmts) |stmt| try self.lowerStmt(stmt);
+
+                const one_t = try self.freshTemp(.frame, sema_mod.T_INT);
+                try self.emit(.{ .const_int = .{ .dest = one_t, .value = 1 } });
+                const inc_t = try self.freshTemp(.frame, sema_mod.T_INT);
+                try self.emit(.{ .binary = .{ .dest = inc_t, .op = .add, .left = var_t, .right = one_t } });
+                try self.emit(.{ .copy = .{ .dest = var_t, .src = inc_t } });
+                _ = (self.currentScope()).update(fi.var_name, var_t);
+                try self.emit(.{ .jump = cond_lbl });
+                try self.emit(.{ .label = after_lbl });
+                self.popScope();
+            },
+            else => {
+                const iter_t = try self.lowerExpr(fi.iter);
+                const iter_type_id = self.temps.items[iter_t].type_id;
+                if (iter_type_id == sema_mod.T_ARRAY) {
+                    const idx_t = try self.freshTemp(.frame, sema_mod.T_INT);
+                    const zero_t = try self.freshTemp(.frame, sema_mod.T_INT);
+                    try self.emit(.{ .const_int = .{ .dest = zero_t, .value = 0 } });
+                    try self.emit(.{ .copy = .{ .dest = idx_t, .src = zero_t } });
+                    const len_t = try self.freshTemp(.frame, sema_mod.T_INT);
+                    const len_args = try self.allocator.dupe(TempId, &.{iter_t});
+                    try self.emit(.{ .call = .{ .dest = len_t, .callee = "array_len", .args = len_args } });
+                    const elem_t = try self.freshTemp(.frame, sema_mod.T_UNKNOWN);
+                    try self.pushScope();
+                    try (self.currentScope()).define(self.allocator, fi.var_name, elem_t);
                     try self.emit(.{ .jump = cond_lbl });
                     try self.emit(.{ .label = cond_lbl });
                     const cmp_t = try self.freshTemp(.frame, sema_mod.T_BOOL);
-                    try self.emit(.{ .binary = .{ .dest = cmp_t, .op = .lt, .left = var_t, .right = hi_t } });
+                    try self.emit(.{ .binary = .{ .dest = cmp_t, .op = .lt, .left = idx_t, .right = len_t } });
                     try self.emit(.{ .branch = .{ .cond = cmp_t, .then_lbl = body_lbl, .else_lbl = after_lbl } });
-
                     try self.emit(.{ .label = body_lbl });
-                    // Lower body stmts directly (we already pushed scope)
+                    const get_args = try self.allocator.dupe(TempId, &.{ iter_t, idx_t });
+                    try self.emit(.{ .call = .{ .dest = elem_t, .callee = "array_get", .args = get_args } });
                     const body_block = self.pool.get(fi.body).block;
-                    for (body_block.stmts) |stmt| try self.lowerStmt(stmt);
-
-                    // Increment var_t
+                    for (body_block.stmts) |stmt_idx| try self.lowerStmt(stmt_idx);
                     const one_t = try self.freshTemp(.frame, sema_mod.T_INT);
                     try self.emit(.{ .const_int = .{ .dest = one_t, .value = 1 } });
                     const inc_t = try self.freshTemp(.frame, sema_mod.T_INT);
-                    try self.emit(.{ .binary = .{ .dest = inc_t, .op = .add, .left = var_t, .right = one_t } });
-                    try self.emit(.{ .copy = .{ .dest = var_t, .src = inc_t } });
-                    // update scope binding
-                    _ = (self.currentScope()).update(fi.var_name, var_t);
+                    try self.emit(.{ .binary = .{ .dest = inc_t, .op = .add, .left = idx_t, .right = one_t } });
+                    try self.emit(.{ .copy = .{ .dest = idx_t, .src = inc_t } });
                     try self.emit(.{ .jump = cond_lbl });
                     try self.emit(.{ .label = after_lbl });
                     self.popScope();
-                    break :blk var_t;
-                },
-                else => {
-                    // Non-range iter: lower as expr and skip (placeholder)
-                    const iter_t = try self.lowerExpr(fi.iter);
-                    break :blk iter_t;
-                },
-            }
-        };
-        _ = loop_var_t;
+                }
+            },
+        }
+
+        _ = self.loop_stack.pop();
     }
 
     // ---- Expression lowering -----------------------------------------------
@@ -512,14 +686,93 @@ pub const Lowerer = struct {
 
             // ---- Calls -----------------------------------------------------
             .call => |c| {
+                // Check for method call on string or array (obj.method(args))
+                if (self.pool.get(c.callee).* == .field_access) {
+                    const fa = self.pool.get(c.callee).field_access;
+                    const obj_type = self.sema.nodeType(fa.object);
+                    if (obj_type == sema_mod.T_STRING or obj_type == sema_mod.T_ARRAY) {
+                        const obj = try self.lowerExpr(fa.object);
+                        var args = std.ArrayListUnmanaged(TempId){};
+                        defer args.deinit(self.allocator);
+                        try args.append(self.allocator, obj);
+                        for (c.args) |a| try args.append(self.allocator, try self.lowerExpr(a));
+                        const is_void = (type_id == sema_mod.T_VOID);
+                        const t = if (is_void) ir_mod.invalid_temp else try self.freshTemp(lt, type_id);
+
+                        // For array push/get/set, check if the array has a struct element
+                        // type and route to the typed helper (array_push_Struct, etc.).
+                        const callee_name: []const u8 = blk: {
+                            if (obj_type == sema_mod.T_ARRAY) {
+                                const method = fa.field;
+                                if (std.mem.eql(u8, method, "push") or
+                                    std.mem.eql(u8, method, "get") or
+                                    std.mem.eql(u8, method, "set"))
+                                {
+                                    // Derive elem type from the call itself to avoid
+                                    // cross-function variable-name collisions in the global
+                                    // array_elem_types map:
+                                    //   push(v)    → type of v (c.args[0])
+                                    //   set(i, v)  → type of v (c.args[1])
+                                    //   get(i)     → return type of the call (type_id)
+                                    // Fall back to the variable-name map if direct info
+                                    // is unavailable.
+                                    const elem_ty: sema_mod.TypeId = elem_ty_blk: {
+                                        if (std.mem.eql(u8, method, "push") and c.args.len >= 1) {
+                                            break :elem_ty_blk self.sema.nodeType(c.args[0]);
+                                        } else if (std.mem.eql(u8, method, "set") and c.args.len >= 2) {
+                                            break :elem_ty_blk self.sema.nodeType(c.args[1]);
+                                        } else if (std.mem.eql(u8, method, "get")) {
+                                            break :elem_ty_blk type_id;
+                                        }
+                                        // Fallback: variable-name map.
+                                        const var_name: ?[]const u8 = switch (self.pool.get(fa.object).*) {
+                                            .ident    => |id| id.name,
+                                            .attr_ref => |ar| ar.name,
+                                            else => null,
+                                        };
+                                        if (var_name) |vn| {
+                                            if (self.sema.array_elem_types.get(vn)) |et| {
+                                                break :elem_ty_blk et;
+                                            }
+                                        }
+                                        break :elem_ty_blk sema_mod.T_UNKNOWN;
+                                    };
+                                    if (elem_ty >= 10) { // struct type
+                                        var it = self.sema.struct_type_ids.iterator();
+                                        while (it.next()) |entry| {
+                                            if (entry.value_ptr.* == elem_ty) {
+                                                break :blk try std.fmt.allocPrint(
+                                                    self.allocator, "array_{s}_{s}",
+                                                    .{ method, entry.key_ptr.* });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            const prefix: []const u8 = if (obj_type == sema_mod.T_STRING) "str_" else "array_";
+                            break :blk try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ prefix, fa.field });
+                        };
+
+                        try self.emit(.{ .call = .{
+                            .dest   = t,
+                            .callee = callee_name,
+                            .args   = try args.toOwnedSlice(self.allocator),
+                        } });
+                        return t;
+                    }
+                }
                 // Extract callee name from ident node (direct call) or
                 // namespaced field access like `utils.fn_name`.
+                // For module-qualified calls we emit `{module}_{fn}` so that
+                // codegen produces `chasm_{module}_{fn}`, matching the prefixed
+                // definition in the imported module's C file.
                 const callee_name = switch (self.pool.get(c.callee).*) {
                     .ident => |id| id.name,
                     .field_access => |fa| blk: {
-                        // `module.fn` — use just the fn part as the C callee name.
                         if (self.pool.get(fa.object).* == .ident) {
-                            break :blk fa.field;
+                            const mod = self.pool.get(fa.object).ident.name;
+                            break :blk try std.fmt.allocPrint(
+                                self.allocator, "{s}_{s}", .{ mod, fa.field });
                         }
                         break :blk "__indirect__";
                     },
@@ -538,18 +791,49 @@ pub const Lowerer = struct {
                 return t;
             },
             .field_access => |fa| {
+                const obj_type = self.sema.nodeType(fa.object);
                 const obj = try self.lowerExpr(fa.object);
                 const t   = try self.freshTemp(lt, type_id);
+                // String .len → str_len(s)
+                if (obj_type == sema_mod.T_STRING and std.mem.eql(u8, fa.field, "len")) {
+                    const arg_slice = try self.allocator.dupe(TempId, &.{obj});
+                    try self.emit(.{ .call = .{ .dest = t, .callee = "str_len", .args = arg_slice } });
+                    return t;
+                }
+                // Array .len → array_len(a)
+                if (obj_type == sema_mod.T_ARRAY and std.mem.eql(u8, fa.field, "len")) {
+                    const arg_slice = try self.allocator.dupe(TempId, &.{obj});
+                    try self.emit(.{ .call = .{ .dest = t, .callee = "array_len", .args = arg_slice } });
+                    return t;
+                }
                 try self.emit(.{ .field_get = .{ .dest = t, .object = obj, .field = fa.field } });
                 return t;
             },
             .index => |ix| {
-                // Emit as a call to __index__ for now.
                 const arr = try self.lowerExpr(ix.array);
                 const i   = try self.lowerExpr(ix.idx);
                 const t   = try self.freshTemp(lt, type_id);
+                const arr_type = self.sema.nodeType(ix.array);
+                // String indexing: s[i] → str_char_at(s, i)
+                if (arr_type == sema_mod.T_STRING) {
+                    const arg_slice = try self.allocator.dupe(TempId, &.{ arr, i });
+                    try self.emit(.{ .call = .{ .dest = t, .callee = "str_char_at", .args = arg_slice } });
+                    return t;
+                }
                 const arg_slice = try self.allocator.dupe(TempId, &.{ arr, i });
-                try self.emit(.{ .call = .{ .dest = t, .callee = "__index__", .args = arg_slice } });
+                // Use a typed getter if the element is a struct type (type_id >= 10).
+                const getter = if (type_id >= 10) blk: {
+                    // Look up struct name from type_id.
+                    var it = self.sema.struct_type_ids.iterator();
+                    while (it.next()) |entry| {
+                        if (entry.value_ptr.* == type_id) {
+                            const name = try std.fmt.allocPrint(self.allocator, "array_get_{s}", .{entry.key_ptr.*});
+                            break :blk name;
+                        }
+                    }
+                    break :blk @as([]const u8, "array_get");
+                } else "array_get";
+                try self.emit(.{ .call = .{ .dest = t, .callee = getter, .args = arg_slice } });
                 return t;
             },
 
@@ -683,6 +967,11 @@ pub const Lowerer = struct {
                                 const args = try self.allocator.dupe(TempId, &.{e_t});
                                 try self.emit(.{ .call = .{ .dest = s_t, .callee = "float_to_str", .args = args } });
                                 break :blk s_t;
+                            } else if (e_ty == sema_mod.T_BOOL) {
+                                const s_t = try self.freshTemp(.frame, sema_mod.T_STRING);
+                                const args = try self.allocator.dupe(TempId, &.{e_t});
+                                try self.emit(.{ .call = .{ .dest = s_t, .callee = "bool_to_str", .args = args } });
+                                break :blk s_t;
                             } else {
                                 const s_t = try self.freshTemp(.frame, sema_mod.T_STRING);
                                 const args = try self.allocator.dupe(TempId, &.{e_t});
@@ -725,8 +1014,21 @@ pub const Lowerer = struct {
 
             // ---- Struct literal --------------------------------------------
             .struct_lit => |sl| {
-                // Lower field values; return a placeholder zero temp
-                for (sl.fields) |f| _ = try self.lowerExpr(f.value);
+                const struct_type_id = self.sema.typeIdForStruct(sl.type_name);
+                const t = try self.freshTemp(lt, struct_type_id);
+                for (sl.fields) |field| {
+                    const field_t = try self.lowerExpr(field.value);
+                    try self.emit(.{ .field_set = .{ .object = t, .field = field.name, .src = field_t } });
+                }
+                return t;
+            },
+
+            // ---- Tuple literal (multi-return value) ------------------------
+            .tuple_lit => |tl| {
+                // Lower as a call result temp — the actual value comes from a
+                // multi-return function call. Just lower the first element as a
+                // stand-in; real lowering happens via lowerStmt's multi_assign.
+                if (tl.values.len > 0) return try self.lowerExpr(tl.values[0]);
                 const t = try self.freshTemp(.frame, 0);
                 try self.emit(.{ .const_int = .{ .dest = t, .value = 0 } });
                 return t;
@@ -777,6 +1079,12 @@ pub const Lowerer = struct {
                 try self.emit(.{ .binary = .{ .dest = t, .op = .eq, .left = scrutinee, .right = lit_t } });
                 return t;
             },
+            .pattern_variant => {
+                // Always matches for now (tag-only check could be added later).
+                const t = try self.freshTemp(.frame, sema_mod.T_BOOL);
+                try self.emit(.{ .const_bool = .{ .dest = t, .value = true } });
+                return t;
+            },
             else => {
                 const t = try self.freshTemp(.frame, sema_mod.T_BOOL);
                 try self.emit(.{ .const_bool = .{ .dest = t, .value = true } });
@@ -819,7 +1127,7 @@ pub const Lowerer = struct {
         var iter = self.sema.enums.iterator();
         while (iter.next()) |entry| {
             for (entry.value_ptr.*, 0..) |v, i| {
-                if (std.mem.eql(u8, v, variant_name)) return @intCast(i);
+                if (std.mem.eql(u8, v.name, variant_name)) return @intCast(i);
             }
         }
         return 0;
@@ -830,6 +1138,12 @@ pub const Lowerer = struct {
         switch (self.pool.get(pattern_idx).*) {
             .pattern_bind => |pb| {
                 try (self.currentScope()).define(self.allocator, pb.name, scrutinee);
+            },
+            .pattern_variant => |pv| {
+                // Bind all payload fields to the scrutinee temp (simplified — no field extraction).
+                for (pv.bindings) |binding_name| {
+                    try (self.currentScope()).define(self.allocator, binding_name, scrutinee);
+                }
             },
             else => {},
         }
@@ -857,7 +1171,7 @@ pub const Lowerer = struct {
     fn endsWithTerminator(self: *const Lowerer) bool {
         if (self.instrs.items.len == 0) return false;
         return switch (self.instrs.items[self.instrs.items.len - 1]) {
-            .ret, .ret_void, .jump => true,
+            .ret, .ret_void, .jump, .ret_tuple => true,
             else => false,
         };
     }

@@ -20,9 +20,10 @@
 const std    = @import("std");
 const jsonrpc = @import("jsonrpc");
 
-const ast_mod  = @import("ast");
-const diag_mod = @import("diag");
-const sema_mod = @import("sema");
+const ast_mod    = @import("ast");
+const diag_mod   = @import("diag");
+const sema_mod   = @import("sema");
+const prelude_mod = @import("prelude");
 const Lexer    = @import("lexer").Lexer;
 const Parser   = @import("parser").Parser;
 
@@ -46,11 +47,14 @@ pub const Diagnostic = struct {
 };
 
 pub const AnalysisResult = struct {
-    arena:       std.heap.ArenaAllocator,
-    pool:        AstPool,
-    diags:       DiagList,
-    sema:        Sema,
-    top_level:   []const NodeIndex,
+    arena:             std.heap.ArenaAllocator,
+    pool:              AstPool,
+    diags:             DiagList,
+    sema:              Sema,
+    top_level:         []const NodeIndex,
+    /// Number of source lines occupied by the injected prelude.
+    /// Subtracted from diagnostic spans before sending to the editor.
+    prelude_line_offset: u32,
 
     pub fn deinit(self: *AnalysisResult) void {
         self.arena.deinit();
@@ -58,19 +62,35 @@ pub const AnalysisResult = struct {
 };
 
 /// Run the full lex → parse → sema pipeline on `source`.
+/// The raylib prelude is always prepended so that engine API names are defined.
 /// Returns an `AnalysisResult` owned by an internal arena.
 pub fn analyze(source: []const u8, backing: std.mem.Allocator) !AnalysisResult {
+    return analyzeWithUri(source, "", backing);
+}
+
+/// Same as `analyze` but accepts the document URI so that imports can be
+/// resolved relative to the file's directory.
+pub fn analyzeWithUri(source: []const u8, uri: []const u8, backing: std.mem.Allocator) !AnalysisResult {
     var arena = std.heap.ArenaAllocator.init(backing);
     const alloc = arena.allocator();
+
+    // Prepend raylib prelude so all engine functions are defined during analysis.
+    const prelude = prelude_mod.raylib_prelude;
+    const full_source = try std.mem.concat(alloc, u8, &.{ prelude, "\n", source });
+
+    // Count prelude lines (including the separator "\n") so we can adjust
+    // diagnostic line numbers back to the user's file coordinates.
+    const prelude_line_offset: u32 = @intCast(std.mem.count(u8, prelude, "\n") + 1);
 
     var pool  = AstPool.init(alloc);
     var diags = DiagList.init(alloc);
 
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(full_source);
     const toks = lex.tokenize(alloc) catch {
         return AnalysisResult{
             .arena = arena, .pool = pool, .diags = diags,
             .sema = Sema.init(&pool, &diags, alloc), .top_level = &.{},
+            .prelude_line_offset = prelude_line_offset,
         };
     };
 
@@ -79,15 +99,24 @@ pub fn analyze(source: []const u8, backing: std.mem.Allocator) !AnalysisResult {
         return AnalysisResult{
             .arena = arena, .pool = pool, .diags = diags,
             .sema = Sema.init(&pool, &diags, alloc), .top_level = &.{},
+            .prelude_line_offset = prelude_line_offset,
         };
     };
 
-    var sem = Sema.init(&pool, &diags, alloc);
+    // Derive a filesystem path from the URI for import resolution.
+    // Strip "file://" prefix; on POSIX the result is already absolute.
+    const file_path: []const u8 = if (std.mem.startsWith(u8, uri, "file://"))
+        uri["file://".len..]
+    else
+        uri;
+
+    var sem = Sema.initWithFile(&pool, &diags, alloc, file_path);
     sem.analyze(top) catch {};
 
     return AnalysisResult{
         .arena = arena, .pool = pool, .diags = diags,
         .sema = sem, .top_level = top,
+        .prelude_line_offset = prelude_line_offset,
     };
 }
 
@@ -159,14 +188,18 @@ pub fn buildDiagnosticsJson(
 
     var first = true;
     for (result.diags.items.items) |d| {
-        if (!first) try buf.append(alloc, ',');
-        first = false;
-
         const s = d.span;
+        // Skip diagnostics that originate inside the injected prelude.
+        if (s.line <= result.prelude_line_offset) continue;
+        // Adjust line back to user-file coordinates (1-indexed prelude offset).
+        const user_line = s.line - result.prelude_line_offset;
         // Convert 1-indexed span → 0-indexed LSP range.
-        const sl: u32 = if (s.line > 0) s.line - 1 else 0;
+        const sl: u32 = if (user_line > 0) user_line - 1 else 0;
         const sc: u32 = if (s.col  > 0) s.col  - 1 else 0;
         const ec: u32 = sc + s.len;
+
+        if (!first) try buf.append(alloc, ',');
+        first = false;
         const severity: u32 = switch (d.level) {
             .err  => 1,
             .warn => 2,
@@ -318,6 +351,8 @@ pub const Server = struct {
             try self.handleDefinition(id_json, params, writer);
         } else if (std.mem.eql(u8, method, "textDocument/completion")) {
             try self.handleCompletion(id_json, params, writer);
+        } else if (std.mem.eql(u8, method, "textDocument/signatureHelp")) {
+            try self.handleSignatureHelp(id_json, params, writer);
         } else if (id_json.len > 0 and !std.mem.eql(u8, id_json, "null")) {
             // Unknown request (has id) — respond with method-not-found.
             try jsonrpc.writeError(writer, id_json, -32601, "Method not found");
@@ -329,9 +364,9 @@ pub const Server = struct {
 
     fn handleInitialize(self: *Server, id_json: []const u8, writer: anytype) !void {
         _ = self;
-        // Declare: incremental sync (kind=2), hover, diagnostics (push), definition, completion.
+        // Declare: incremental sync (kind=2), hover, diagnostics (push), definition, completion, signatureHelp.
         const result =
-            \\{"capabilities":{"textDocumentSync":{"openClose":true,"change":2},"hoverProvider":true,"definitionProvider":true,"completionProvider":{"triggerCharacters":[".","@"]}}}
+            \\{"capabilities":{"textDocumentSync":{"openClose":true,"change":2},"hoverProvider":true,"definitionProvider":true,"completionProvider":{"triggerCharacters":[".","@"]},"signatureHelpProvider":{"triggerCharacters":["(",","]}}}
         ;
         try jsonrpc.writeResponse(writer, id_json, result);
     }
@@ -414,10 +449,12 @@ pub const Server = struct {
             else     => 0,
         });
 
-        var result = try analyze(source, alloc);
+        var result = try analyzeWithUri(source, uri, alloc);
         defer result.deinit();
 
-        if (findNodeAt(&result.pool, line, char)) |found| {
+        // Offset the LSP line by the prelude so we search the combined AST.
+        const adjusted_line = line + result.prelude_line_offset;
+        if (findNodeAt(&result.pool, adjusted_line, char)) |found| {
             const hover_json = try buildHoverJson(&result, found.idx, alloc);
             defer alloc.free(hover_json);
             try jsonrpc.writeResponse(writer, id_json, hover_json);
@@ -470,11 +507,11 @@ pub const Server = struct {
             else     => 0,
         });
 
-        var result = try analyze(source, alloc);
+        var result = try analyzeWithUri(source, uri, alloc);
         defer result.deinit();
 
-        // Find node at cursor
-        const found = findNodeAt(&result.pool, line, char) orelse {
+        // Find node at cursor (offset line by prelude to search the combined AST)
+        const found = findNodeAt(&result.pool, line + result.prelude_line_offset, char) orelse {
             try jsonrpc.writeResponse(writer, id_json, "null");
             return;
         };
@@ -502,7 +539,9 @@ pub const Server = struct {
         }
 
         if (decl_span) |ds| {
-            const dl: u32 = if (ds.line > 0) ds.line - 1 else 0;
+            // Subtract prelude offset and convert 1-indexed → 0-indexed.
+            const user_line = if (ds.line > result.prelude_line_offset) ds.line - result.prelude_line_offset else ds.line;
+            const dl: u32 = if (user_line > 0) user_line - 1 else 0;
             const dc: u32 = if (ds.col  > 0) ds.col  - 1 else 0;
             const ec: u32 = dc + ds.len;
             const loc_json = try std.fmt.allocPrint(alloc,
@@ -527,47 +566,257 @@ pub const Server = struct {
             return;
         };
 
-        var ar = try analyze(source, alloc);
+        // Read cursor position to detect `module.` prefix context.
+        const module_prefix: ?[]const u8 = blk: {
+            const pos_obj = switch (params orelse break :blk null) {
+                .object => |o| switch (o.get("position") orelse break :blk null) {
+                    .object => |p| p,
+                    else    => break :blk null,
+                },
+                else => break :blk null,
+            };
+            const line_num: usize = @intCast(switch (pos_obj.get("line") orelse .null) {
+                .integer => |n| n,
+                else     => break :blk null,
+            });
+            const char_num: usize = @intCast(switch (pos_obj.get("character") orelse .null) {
+                .integer => |n| n,
+                else     => break :blk null,
+            });
+            // Find the line in source.
+            var cur_line: usize = 0;
+            var line_start: usize = 0;
+            for (source, 0..) |c, ci| {
+                if (cur_line == line_num) { line_start = ci; break; }
+                if (c == '\n') cur_line += 1;
+            }
+            const line_end = line_start + char_num;
+            if (line_end > source.len) break :blk null;
+            const prefix_text = source[line_start..line_end];
+            if (prefix_text.len == 0) break :blk null;
+            // Find the last `.` in the prefix — handles both `utils.` and `utils.pa`.
+            const dot_pos = std.mem.lastIndexOfScalar(u8, prefix_text, '.') orelse break :blk null;
+            const before_dot = prefix_text[0..dot_pos];
+            // Walk back to find the start of the identifier before the dot.
+            var id_end = before_dot.len;
+            while (id_end > 0) {
+                const ch = before_dot[id_end - 1];
+                if ((ch >= 'a' and ch <= 'z') or (ch >= 'A' and ch <= 'Z') or
+                    (ch >= '0' and ch <= '9') or ch == '_') {
+                    id_end -= 1;
+                } else break;
+            }
+            const mod_name = before_dot[id_end..];
+            if (mod_name.len == 0) break :blk null;
+            break :blk mod_name;
+        };
+
+        var ar = try analyzeWithUri(source, uri, alloc);
         defer ar.deinit();
 
         var buf: std.ArrayListUnmanaged(u8) = .{};
         try buf.appendSlice(alloc, "[");
         var first = true;
 
-        // Collect all symbols from the module scope
-        var it = ar.sema.module_scope.symbols.iterator();
-        while (it.next()) |entry| {
-            if (!first) try buf.append(alloc, ',');
-            first = false;
-            const kind: u32 = 3; // Function
-            const item = try std.fmt.allocPrint(alloc,
-                \\{{"label":"{s}","kind":{d}}}
-                , .{ entry.key_ptr.*, kind });
-            defer alloc.free(item);
-            try buf.appendSlice(alloc, item);
-        }
-
-        // Collect function and var decl names from the AST
-        for (0..ar.pool.len()) |i| {
-            const idx: NodeIndex = @intCast(i);
-            const name: ?[]const u8 = switch (ar.pool.get(idx).*) {
-                .fn_decl  => |f| f.name,
-                .var_decl => |v| v.name,
-                .ident    => |id| id.name,
-                else      => null,
-            };
-            if (name) |n| {
+        if (module_prefix) |prefix| {
+            // Only return members of the named module (strip `prefix.` from labels).
+            const needle = try std.fmt.allocPrint(alloc, "{s}.", .{prefix});
+            defer alloc.free(needle);
+            var it = ar.sema.module_scope.symbols.iterator();
+            while (it.next()) |entry| {
+                const sym_name = entry.key_ptr.*;
+                if (!std.mem.startsWith(u8, sym_name, needle)) continue;
+                const label = sym_name[needle.len..];
                 if (!first) try buf.append(alloc, ',');
                 first = false;
                 const item = try std.fmt.allocPrint(alloc,
-                    \\{{"label":"{s}","kind":6}}
-                    , .{n});
+                    \\{{"label":"{s}","kind":3}}
+                    , .{label});
                 defer alloc.free(item);
                 try buf.appendSlice(alloc, item);
+            }
+        } else {
+            // Collect all symbols from the module scope (excluding namespaced ones).
+            var it = ar.sema.module_scope.symbols.iterator();
+            while (it.next()) |entry| {
+                const sym_name = entry.key_ptr.*;
+                // Skip prefixed module members — they only appear in `module.` context.
+                if (std.mem.indexOfScalar(u8, sym_name, '.') != null) continue;
+                if (!first) try buf.append(alloc, ',');
+                first = false;
+                const item = try std.fmt.allocPrint(alloc,
+                    \\{{"label":"{s}","kind":3}}
+                    , .{sym_name});
+                defer alloc.free(item);
+                try buf.appendSlice(alloc, item);
+            }
+
+            // Collect function and var decl names from the AST.
+            for (0..ar.pool.len()) |i| {
+                const idx: NodeIndex = @intCast(i);
+                const name: ?[]const u8 = switch (ar.pool.get(idx).*) {
+                    .fn_decl  => |f| f.name,
+                    .var_decl => |v| v.name,
+                    else      => null,
+                };
+                if (name) |n| {
+                    if (!first) try buf.append(alloc, ',');
+                    first = false;
+                    const item = try std.fmt.allocPrint(alloc,
+                        \\{{"label":"{s}","kind":6}}
+                        , .{n});
+                    defer alloc.free(item);
+                    try buf.appendSlice(alloc, item);
+                }
             }
         }
 
         try buf.appendSlice(alloc, "]");
+        const result_json = try buf.toOwnedSlice(alloc);
+        defer alloc.free(result_json);
+        try jsonrpc.writeResponse(writer, id_json, result_json);
+    }
+
+    fn handleSignatureHelp(self: *Server, id_json: []const u8, params: ?std.json.Value, writer: anytype) !void {
+        const alloc = self.gpa.allocator();
+
+        const uri = getNestedStr(params, &.{"textDocument", "uri"}) orelse {
+            try jsonrpc.writeResponse(writer, id_json, "null");
+            return;
+        };
+        const source = self.docs.get(uri) orelse {
+            try jsonrpc.writeResponse(writer, id_json, "null");
+            return;
+        };
+
+        const pos_obj = blk: {
+            const p = params orelse {
+                try jsonrpc.writeResponse(writer, id_json, "null");
+                return;
+            };
+            break :blk switch (p) {
+                .object => |o| switch (o.get("position") orelse {
+                    try jsonrpc.writeResponse(writer, id_json, "null");
+                    return;
+                }) {
+                    .object => |pobj| pobj,
+                    else => {
+                        try jsonrpc.writeResponse(writer, id_json, "null");
+                        return;
+                    },
+                },
+                else => {
+                    try jsonrpc.writeResponse(writer, id_json, "null");
+                    return;
+                },
+            };
+        };
+
+        const line: u32 = @intCast(switch (pos_obj.get("line") orelse .null) {
+            .integer => |n| n,
+            else     => 0,
+        });
+        const char: u32 = @intCast(switch (pos_obj.get("character") orelse .null) {
+            .integer => |n| n,
+            else     => 0,
+        });
+
+        const call_ctx = findCallContext(source, line, char) orelse {
+            try jsonrpc.writeResponse(writer, id_json, "null");
+            return;
+        };
+
+        var result = try analyzeWithUri(source, uri, alloc);
+        defer result.deinit();
+
+        // Find the fn_decl for the called function in the AST pool.
+        var fn_node_idx: ?NodeIndex = null;
+        for (0..result.pool.len()) |i| {
+            const idx: NodeIndex = @intCast(i);
+            switch (result.pool.get(idx).*) {
+                .fn_decl => |f| if (std.mem.eql(u8, f.name, call_ctx.name)) {
+                    fn_node_idx = idx;
+                    break;
+                },
+                else => {},
+            }
+        }
+
+        if (fn_node_idx == null) {
+            try jsonrpc.writeResponse(writer, id_json, "null");
+            return;
+        }
+
+        const fn_node = result.pool.get(fn_node_idx.?).fn_decl;
+
+        // Build the signature label and parameter list JSON.
+        var sig_label = std.ArrayListUnmanaged(u8){};
+        defer sig_label.deinit(alloc);
+        try sig_label.appendSlice(alloc, fn_node.name);
+        try sig_label.append(alloc, '(');
+
+        var params_arr = std.ArrayListUnmanaged(u8){};
+        defer params_arr.deinit(alloc);
+        try params_arr.append(alloc, '[');
+
+        for (fn_node.params, 0..) |param, pi| {
+            if (pi > 0) {
+                try sig_label.appendSlice(alloc, ", ");
+                try params_arr.append(alloc, ',');
+            }
+
+            var param_label = std.ArrayListUnmanaged(u8){};
+            defer param_label.deinit(alloc);
+            try param_label.appendSlice(alloc, param.name);
+
+            // Append lifetime annotation if explicit.
+            switch (param.lifetime) {
+                .inferred => {},
+                .explicit => |lt| {
+                    try param_label.appendSlice(alloc, " :: ");
+                    try param_label.appendSlice(alloc, @tagName(lt));
+                    try param_label.append(alloc, ' ');
+                },
+            }
+
+            // Append type name from the type annotation node if present.
+            if (param.ty) |ty_idx| {
+                switch (result.pool.get(ty_idx).*) {
+                    .ident => |id| {
+                        if (param.lifetime == .inferred) try param_label.appendSlice(alloc, ": ");
+                        try param_label.appendSlice(alloc, id.name);
+                    },
+                    else => {},
+                }
+            }
+
+            try sig_label.appendSlice(alloc, param_label.items);
+
+            try params_arr.appendSlice(alloc, "{\"label\":");
+            try jsonStr(&params_arr, alloc, param_label.items);
+            try params_arr.append(alloc, '}');
+        }
+
+        try sig_label.append(alloc, ')');
+        try params_arr.append(alloc, ']');
+
+        const active = if (fn_node.params.len > 0)
+            @min(call_ctx.active_param, @as(u32, @intCast(fn_node.params.len - 1)))
+        else
+            0;
+
+        var buf = std.ArrayListUnmanaged(u8){};
+        defer buf.deinit(alloc);
+        try buf.appendSlice(alloc, "{\"signatures\":[{\"label\":");
+        try jsonStr(&buf, alloc, sig_label.items);
+        try buf.appendSlice(alloc, ",\"parameters\":");
+        try buf.appendSlice(alloc, params_arr.items);
+        try buf.appendSlice(alloc, "}],\"activeSignature\":0,\"activeParameter\":");
+        const active_str = try std.fmt.allocPrint(alloc, "{d}", .{active});
+        defer alloc.free(active_str);
+        try buf.appendSlice(alloc, active_str);
+        try buf.append(alloc, '}');
+
         const result_json = try buf.toOwnedSlice(alloc);
         defer alloc.free(result_json);
         try jsonrpc.writeResponse(writer, id_json, result_json);
@@ -594,7 +843,7 @@ pub const Server = struct {
         alloc: std.mem.Allocator,
     ) !void {
         const source = self.docs.get(uri) orelse return;
-        var result = try analyze(source, alloc);
+        var result = try analyzeWithUri(source, uri, alloc);
         defer result.deinit();
         const params_json = try buildDiagnosticsJson(uri, &result, alloc);
         defer alloc.free(params_json);
@@ -642,6 +891,61 @@ fn extractUriAndText(
         else    => return null,
     };
     return .{ uri, text };
+}
+
+// ---------------------------------------------------------------------------
+// Signature help — call context detection
+// ---------------------------------------------------------------------------
+
+/// Scan the source text backward from (line, col) to find the enclosing
+/// function call.  Returns the function name and the 0-based index of the
+/// argument the cursor is in (counted by commas at the same nesting depth).
+fn findCallContext(source: []const u8, line: u32, col: u32) ?struct { name: []const u8, active_param: u32 } {
+    // Locate the cursor byte offset.
+    var offset: usize = 0;
+    var cur_line: u32 = 0;
+    while (offset < source.len) {
+        if (cur_line == line) {
+            offset += @min(@as(usize, col), source.len - offset);
+            break;
+        }
+        if (source[offset] == '\n') cur_line += 1;
+        offset += 1;
+    }
+    if (offset == 0) return null;
+
+    var depth: i32 = 0;
+    var commas: u32 = 0;
+    var i = offset;
+    while (i > 0) {
+        i -= 1;
+        switch (source[i]) {
+            ')' => depth += 1,
+            '(' => {
+                if (depth == 0) {
+                    // Found the opening paren of the enclosing call.
+                    // Walk backwards past any whitespace to find the identifier.
+                    var j = i;
+                    while (j > 0 and source[j - 1] == ' ') j -= 1;
+                    const id_end = j;
+                    while (j > 0 and callIdentChar(source[j - 1])) j -= 1;
+                    const name = source[j..id_end];
+                    if (name.len == 0) return null;
+                    return .{ .name = name, .active_param = commas };
+                }
+                depth -= 1;
+            },
+            ',' => if (depth == 0) { commas += 1; },
+            '\n' => break, // don't cross line boundaries
+            else => {},
+        }
+    }
+    return null;
+}
+
+fn callIdentChar(c: u8) bool {
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or
+           (c >= '0' and c <= '9') or c == '_';
 }
 
 // ---------------------------------------------------------------------------

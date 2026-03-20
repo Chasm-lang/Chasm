@@ -15,7 +15,7 @@ def on_tick(dt :: float) do
     @speed = 0.3
   end
   if key_down(32) do    # SPACE — boost
-    @speed = 2.5
+    @speed = 5.5
   end
 
   effective_dt :: frame = dt * @speed

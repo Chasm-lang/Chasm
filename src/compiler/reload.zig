@@ -288,6 +288,8 @@ pub const ModuleSnapshot = struct {
             .enum_variants    = &.{},
             .extern_fns       = &.{},
             .imported_fwd_decls = &.{},
+            .struct_defs      = &.{},
+            .tuple_returns    = &.{},
         };
     }
 };
@@ -308,6 +310,8 @@ fn makeModule(attr_defs: []const struct { name: []const u8, type_id: u32, lifeti
         .attr_init_instrs = &.{}, .attr_init_temps = &.{},
         .enum_variants = &.{}, .extern_fns = &.{},
         .imported_fwd_decls = &.{},
+        .struct_defs = &.{},
+        .tuple_returns = &.{},
     };
 }
 

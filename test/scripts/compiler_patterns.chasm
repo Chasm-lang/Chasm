@@ -1,0 +1,35 @@
+defstruct Token do
+  kind :: atom
+  value :: string
+end
+
+defp make_tokens(src :: string) :: []Token do
+  tokens :: []Token = []
+  i = 0
+  n = str_len(src)
+  while i < n do
+    ch = src[i]
+    if ch == 32 do
+      i = i + 1
+    else
+      start = i
+      while i < n and src[i] != 32 do
+        i = i + 1
+      end
+      word = str_slice(src, start, i)
+      tokens.push(Token{ kind: :word, value: word })
+    end
+  end
+  return tokens
+end
+
+def main() do
+  src = "hello world foo"
+  tokens :: []Token = make_tokens(src)
+  count = tokens.len
+  print(count)
+  t0 = tokens.get(0)
+  print(t0.value)
+  t1 = tokens.get(1)
+  print(t1.value)
+end

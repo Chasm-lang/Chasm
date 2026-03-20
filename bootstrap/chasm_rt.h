@@ -1,0 +1,315 @@
+#pragma once
+/* Chasm runtime — minimal arena allocator C header */
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <string.h>
+
+typedef struct {
+    uint8_t *base;
+    size_t   used;
+    size_t   cap;
+} ChasmArena;
+
+typedef struct {
+    ChasmArena frame;
+    ChasmArena script;
+    ChasmArena persistent;
+} ChasmCtx;
+
+static inline void *chasm_alloc(ChasmArena *a, size_t n, size_t align) {
+    size_t adj = (align - (a->used & (align - 1))) & (align - 1);
+    if (a->used + adj + n > a->cap) return NULL;
+    a->used += adj;
+    void *p = a->base + a->used;
+    a->used += n;
+    return p;
+}
+
+static inline void chasm_clear_frame(ChasmCtx *ctx) {
+    ctx->frame.used = 0;
+}
+
+/* Promote a scalar value to a longer-lived arena (primitive: no-op copy). */
+#define chasm_promote_scalar(val) (val)
+
+/* ------------------------------------------------------------------ */
+/* Chasm standard library                                             */
+/* ------------------------------------------------------------------ */
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+/* ---- math -------------------------------------------------------- */
+static inline double chasm_scale(ChasmCtx *ctx, double v, double f)          { (void)ctx; return v * f; }
+static inline double chasm_clamp(ChasmCtx *ctx, double v, double lo, double hi) { (void)ctx; return v < lo ? lo : v > hi ? hi : v; }
+static inline double chasm_abs(ChasmCtx *ctx, double v)                      { (void)ctx; return fabs(v); }
+static inline double chasm_sqrt(ChasmCtx *ctx, double v)                     { (void)ctx; return sqrt(v); }
+static inline double chasm_pow(ChasmCtx *ctx, double b, double e)            { (void)ctx; return pow(b, e); }
+static inline double chasm_floor(ChasmCtx *ctx, double v)                    { (void)ctx; return floor(v); }
+static inline double chasm_ceil(ChasmCtx *ctx, double v)                     { (void)ctx; return ceil(v); }
+static inline double chasm_round(ChasmCtx *ctx, double v)                    { (void)ctx; return round(v); }
+static inline double chasm_lerp(ChasmCtx *ctx, double a, double b, double t) { (void)ctx; return a + (b - a) * t; }
+static inline double chasm_sign(ChasmCtx *ctx, double v)                     { (void)ctx; return v > 0 ? 1.0 : v < 0 ? -1.0 : 0.0; }
+static inline double chasm_sin(ChasmCtx *ctx, double v)                      { (void)ctx; return sin(v); }
+static inline double chasm_cos(ChasmCtx *ctx, double v)                      { (void)ctx; return cos(v); }
+static inline double chasm_tan(ChasmCtx *ctx, double v)                      { (void)ctx; return tan(v); }
+static inline double chasm_atan2(ChasmCtx *ctx, double y, double x)          { (void)ctx; return atan2(y, x); }
+static inline double chasm_min(ChasmCtx *ctx, double a, double b)            { (void)ctx; return a < b ? a : b; }
+static inline double chasm_max(ChasmCtx *ctx, double a, double b)            { (void)ctx; return a > b ? a : b; }
+static inline double chasm_deg_to_rad(ChasmCtx *ctx, double d)               { (void)ctx; return d * (3.14159265358979323846 / 180.0); }
+static inline double chasm_rad_to_deg(ChasmCtx *ctx, double r)               { (void)ctx; return r * (180.0 / 3.14159265358979323846); }
+static inline double chasm_fract(ChasmCtx *ctx, double v)                    { (void)ctx; return v - floor(v); }
+static inline double chasm_wrap(ChasmCtx *ctx, double v, double lo, double hi) {
+    (void)ctx; double r = hi - lo; if (r == 0) return lo;
+    return v - r * floor((v - lo) / r);
+}
+static inline double chasm_snap(ChasmCtx *ctx, double v, double step)        { (void)ctx; return step == 0 ? v : floor(v / step + 0.5) * step; }
+static inline double chasm_smooth_step(ChasmCtx *ctx, double e0, double e1, double x) {
+    (void)ctx; double t = (x-e0)/(e1-e0); t = t<0?0:t>1?1:t;
+    return t*t*(3-2*t);
+}
+static inline double chasm_smoother_step(ChasmCtx *ctx, double e0, double e1, double x) {
+    (void)ctx; double t = (x-e0)/(e1-e0); t = t<0?0:t>1?1:t;
+    return t*t*t*(t*(t*6-15)+10);
+}
+static inline double chasm_ping_pong(ChasmCtx *ctx, double t, double len) {
+    (void)ctx; if (len == 0) return 0;
+    double v = fmod(t, 2*len); if (v < 0) v += 2*len;
+    return v <= len ? v : 2*len - v;
+}
+static inline double chasm_move_toward(ChasmCtx *ctx, double cur, double target, double delta) {
+    (void)ctx; double d = target - cur;
+    return fabs(d) <= delta ? target : cur + (d > 0 ? delta : -delta);
+}
+static inline double chasm_angle_diff(ChasmCtx *ctx, double a, double b) {
+    (void)ctx; double d = fmod(b - a + 3.14159265358979323846, 6.28318530717958647692) - 3.14159265358979323846;
+    return d < -3.14159265358979323846 ? d + 6.28318530717958647692 : d;
+}
+
+/* ---- easing ------------------------------------------------------ */
+static inline double chasm_ease_in(ChasmCtx *ctx, double t)          { (void)ctx; t=t<0?0:t>1?1:t; return t*t; }
+static inline double chasm_ease_out(ChasmCtx *ctx, double t)         { (void)ctx; t=t<0?0:t>1?1:t; return 1-(1-t)*(1-t); }
+static inline double chasm_ease_in_out(ChasmCtx *ctx, double t)      { (void)ctx; t=t<0?0:t>1?1:t; return t<0.5?2*t*t:1-2*(1-t)*(1-t); }
+static inline double chasm_ease_in_cubic(ChasmCtx *ctx, double t)    { (void)ctx; t=t<0?0:t>1?1:t; return t*t*t; }
+static inline double chasm_ease_out_cubic(ChasmCtx *ctx, double t)   { (void)ctx; t=t<0?0:t>1?1:t; return 1-(1-t)*(1-t)*(1-t); }
+static inline double chasm_ease_in_out_cubic(ChasmCtx *ctx, double t) {
+    (void)ctx; t=t<0?0:t>1?1:t;
+    return t<0.5 ? 4*t*t*t : 1-4*(1-t)*(1-t)*(1-t);
+}
+static inline double chasm_ease_in_elastic(ChasmCtx *ctx, double t) {
+    (void)ctx; if(t<=0)return 0; if(t>=1)return 1;
+    return -pow(2,10*t-10)*sin((t*10-10.75)*6.28318530717958647692/3.0);
+}
+static inline double chasm_ease_out_bounce(ChasmCtx *ctx, double t) {
+    (void)ctx; if(t<1/2.75) return 7.5625*t*t;
+    if(t<2/2.75){t-=1.5/2.75;return 7.5625*t*t+0.75;}
+    if(t<2.5/2.75){t-=2.25/2.75;return 7.5625*t*t+0.9375;}
+    t-=2.625/2.75; return 7.5625*t*t+0.984375;
+}
+
+/* ---- vec2 (flat: pass x,y as separate floats) -------------------- */
+static inline double chasm_vec2_len(ChasmCtx *ctx, double x, double y)                   { (void)ctx; return sqrt(x*x+y*y); }
+static inline double chasm_vec2_dot(ChasmCtx *ctx, double ax, double ay, double bx, double by) { (void)ctx; return ax*bx+ay*by; }
+static inline double chasm_vec2_dist(ChasmCtx *ctx, double ax, double ay, double bx, double by) { return chasm_vec2_len(ctx, bx-ax, by-ay); }
+static inline double chasm_vec2_angle(ChasmCtx *ctx, double x, double y)                 { (void)ctx; return atan2(y, x); }
+static inline double chasm_vec2_cross(ChasmCtx *ctx, double ax, double ay, double bx, double by) { (void)ctx; return ax*by - ay*bx; }
+static inline double chasm_vec2_norm_x(ChasmCtx *ctx, double x, double y) {
+    (void)ctx; double l = sqrt(x*x+y*y); return l==0?0:x/l;
+}
+static inline double chasm_vec2_norm_y(ChasmCtx *ctx, double x, double y) {
+    (void)ctx; double l = sqrt(x*x+y*y); return l==0?0:y/l;
+}
+
+/* ---- bitwise ----------------------------------------------------- */
+static inline int64_t chasm_bit_and(ChasmCtx *ctx, int64_t a, int64_t b) { (void)ctx; return a & b; }
+static inline int64_t chasm_bit_or (ChasmCtx *ctx, int64_t a, int64_t b) { (void)ctx; return a | b; }
+static inline int64_t chasm_bit_xor(ChasmCtx *ctx, int64_t a, int64_t b) { (void)ctx; return a ^ b; }
+static inline int64_t chasm_bit_not(ChasmCtx *ctx, int64_t a)            { (void)ctx; return ~a; }
+static inline int64_t chasm_bit_shl(ChasmCtx *ctx, int64_t a, int64_t n) { (void)ctx; return a << (n & 63); }
+static inline int64_t chasm_bit_shr(ChasmCtx *ctx, int64_t a, int64_t n) { (void)ctx; return a >> (n & 63); }
+
+/* ---- random ------------------------------------------------------ */
+/* Seed once on first call via a static flag. */
+static inline double chasm_rand(ChasmCtx *ctx) {
+    static int seeded = 0; (void)ctx;
+    if (!seeded) { srand((unsigned)time(NULL)); seeded = 1; }
+    return (double)rand() / ((double)RAND_MAX + 1.0);
+}
+static inline double chasm_rand_range(ChasmCtx *ctx, double lo, double hi) {
+    return lo + chasm_rand(ctx) * (hi - lo);
+}
+static inline int64_t chasm_rand_int(ChasmCtx *ctx, int64_t lo, int64_t hi) {
+    if (hi <= lo) return lo;
+    return lo + (int64_t)(chasm_rand(ctx) * (double)(hi - lo));
+}
+
+/* ---- string ------------------------------------------------------ */
+static inline int64_t     chasm_str_len(ChasmCtx *ctx, const char *s) { (void)ctx; return s ? (int64_t)strlen(s) : 0; }
+static inline const char *chasm_str_concat(ChasmCtx *ctx, const char *a, const char *b) {
+    if (!a) a=""; if (!b) b="";
+    size_t la=strlen(a), lb=strlen(b);
+    char *o=(char*)chasm_alloc(&ctx->frame,la+lb+1,1); if(!o)return "";
+    memcpy(o,a,la); memcpy(o+la,b,lb); o[la+lb]='\0'; return o;
+}
+static inline const char *chasm_str_repeat(ChasmCtx *ctx, const char *s, int64_t n) {
+    if (!s||n<=0) return "";
+    size_t l=strlen(s); char *o=(char*)chasm_alloc(&ctx->frame,l*(size_t)n+1,1); if(!o)return "";
+    for(int64_t i=0;i<n;i++) memcpy(o+i*l,s,l); o[l*n]='\0'; return o;
+}
+static inline const char *chasm_str_slice(ChasmCtx *ctx, const char *s, int64_t start, int64_t end) {
+    if (!s) return "";
+    int64_t l=(int64_t)strlen(s);
+    if(start<0)start=0; if(end>l)end=l; if(start>=end)return "";
+    size_t n=(size_t)(end-start);
+    char *o=(char*)chasm_alloc(&ctx->frame,n+1,1); if(!o)return "";
+    memcpy(o,s+start,n); o[n]='\0'; return o;
+}
+static inline int64_t     chasm_str_char_at(ChasmCtx *ctx, const char *s, int64_t i) { (void)ctx; if(!s)return 0; int64_t l=(int64_t)strlen(s); if(i<0||i>=l)return 0; return (uint8_t)s[i]; }
+static inline const char *chasm_str_from_char(ChasmCtx *ctx, int64_t c) {
+    char *o=(char*)chasm_alloc(&ctx->frame,2,1); if(!o)return "";
+    o[0]=(char)c; o[1]='\0'; return o;
+}
+static inline const char *chasm_str_upper(ChasmCtx *ctx, const char *s) {
+    if (!s) return "";
+    size_t l=strlen(s); char *o=(char*)chasm_alloc(&ctx->frame,l+1,1); if(!o)return "";
+    for(size_t i=0;i<=l;i++) o[i]=(char)(s[i]>='a'&&s[i]<='z'?s[i]-32:s[i]); return o;
+}
+static inline const char *chasm_str_lower(ChasmCtx *ctx, const char *s) {
+    if (!s) return "";
+    size_t l=strlen(s); char *o=(char*)chasm_alloc(&ctx->frame,l+1,1); if(!o)return "";
+    for(size_t i=0;i<=l;i++) o[i]=(char)(s[i]>='A'&&s[i]<='Z'?s[i]+32:s[i]); return o;
+}
+static inline const char *chasm_str_trim(ChasmCtx *ctx, const char *s) {
+    if (!s) return "";
+    while(*s==' '||*s=='\t'||*s=='\n'||*s=='\r') s++;
+    size_t l=strlen(s);
+    while(l>0&&(s[l-1]==' '||s[l-1]=='\t'||s[l-1]=='\n'||s[l-1]=='\r')) l--;
+    char *o=(char*)chasm_alloc(&ctx->frame,l+1,1); if(!o)return "";
+    memcpy(o,s,l); o[l]='\0'; return o;
+}
+static inline bool        chasm_str_contains(ChasmCtx *ctx, const char *s, const char *sub)    { (void)ctx; return s&&sub&&strstr(s,sub)!=NULL; }
+static inline bool        chasm_str_starts_with(ChasmCtx *ctx, const char *s, const char *pre) { (void)ctx; if(!s||!pre)return 0; return strncmp(s,pre,strlen(pre))==0; }
+static inline bool        chasm_str_ends_with(ChasmCtx *ctx, const char *s, const char *suf)   {
+    (void)ctx; if(!s||!suf)return 0;
+    size_t ls=strlen(s),lx=strlen(suf); return ls>=lx&&memcmp(s+ls-lx,suf,lx)==0;
+}
+static inline bool        chasm_str_eq(ChasmCtx *ctx, const char *a, const char *b) { (void)ctx; return a&&b&&strcmp(a,b)==0; }
+static inline const char *chasm_int_to_str(ChasmCtx *ctx, int64_t v) {
+    char *b=(char*)chasm_alloc(&ctx->frame,24,1); if(!b)return "";
+    snprintf(b,24,"%lld",(long long)v); return b;
+}
+static inline const char *chasm_float_to_str(ChasmCtx *ctx, double v) {
+    char *b=(char*)chasm_alloc(&ctx->frame,32,1); if(!b)return "";
+    snprintf(b,32,"%g",v); return b;
+}
+static inline const char *chasm_bool_to_str(ChasmCtx *ctx, bool v) { (void)ctx; return v ? "true" : "false"; }
+
+/* ---- type conversion --------------------------------------------- */
+static inline int64_t chasm_to_int(ChasmCtx *ctx, double v)   { (void)ctx; return (int64_t)v; }
+static inline double  chasm_to_float(ChasmCtx *ctx, int64_t v){ (void)ctx; return (double)v; }
+static inline bool    chasm_to_bool(ChasmCtx *ctx, int64_t v) { (void)ctx; return v != 0; }
+
+/* ---- color (packed 0xRRGGBBAA) ----------------------------------- */
+static inline int64_t chasm_rgb(ChasmCtx *ctx, int64_t r, int64_t g, int64_t b)           { (void)ctx; return ((r&0xFF)<<24)|((g&0xFF)<<16)|((b&0xFF)<<8)|0xFF; }
+static inline int64_t chasm_rgba(ChasmCtx *ctx, int64_t r, int64_t g, int64_t b, int64_t a){ (void)ctx; return ((r&0xFF)<<24)|((g&0xFF)<<16)|((b&0xFF)<<8)|(a&0xFF); }
+static inline int64_t chasm_color_r(ChasmCtx *ctx, int64_t c) { (void)ctx; return (c>>24)&0xFF; }
+static inline int64_t chasm_color_g(ChasmCtx *ctx, int64_t c) { (void)ctx; return (c>>16)&0xFF; }
+static inline int64_t chasm_color_b(ChasmCtx *ctx, int64_t c) { (void)ctx; return (c>>8)&0xFF; }
+static inline int64_t chasm_color_a(ChasmCtx *ctx, int64_t c) { (void)ctx; return c&0xFF; }
+static inline int64_t chasm_color_lerp(ChasmCtx *ctx, int64_t a, int64_t b, double t) {
+    int64_t ar=(a>>24)&0xFF, ag=(a>>16)&0xFF, ab=(a>>8)&0xFF, aa=a&0xFF;
+    int64_t br=(b>>24)&0xFF, bg=(b>>16)&0xFF, bb=(b>>8)&0xFF, ba=b&0xFF;
+    int64_t r=(int64_t)(ar+(br-ar)*t), g=(int64_t)(ag+(bg-ag)*t);
+    int64_t bl2=(int64_t)(ab+(bb-ab)*t), al=(int64_t)(aa+(ba-aa)*t);
+    return ((r&0xFF)<<24)|((g&0xFF)<<16)|((bl2&0xFF)<<8)|(al&0xFF);
+}
+static inline int64_t chasm_color_mix(ChasmCtx *ctx, int64_t a, int64_t b, double t) { return chasm_color_lerp(ctx,a,b,t); }
+
+/* ---- time -------------------------------------------------------- */
+static inline double  chasm_time_now(ChasmCtx *ctx) { (void)ctx; struct timespec ts; clock_gettime(CLOCK_REALTIME,&ts); return (double)ts.tv_sec+(double)ts.tv_nsec*1e-9; }
+static inline int64_t chasm_time_ms(ChasmCtx *ctx)  { (void)ctx; struct timespec ts; clock_gettime(CLOCK_REALTIME,&ts); return (int64_t)ts.tv_sec*1000+ts.tv_nsec/1000000; }
+
+/* ---- arrays ------------------------------------------------------ */
+typedef struct { void *data; int64_t len; int64_t cap; } ChasmArray;
+static inline ChasmArray chasm_array_new(ChasmCtx *ctx, int64_t cap) {
+    (void)ctx;
+    if (cap <= 0) return (ChasmArray){NULL, 0, 0};
+    void *d = malloc((size_t)cap * 8);
+    return (ChasmArray){d, 0, cap};
+}
+static inline void chasm_array_push(ChasmCtx *ctx, ChasmArray *a, int64_t v) {
+    (void)ctx;
+    if (a->len >= a->cap) {
+        a->cap = a->cap * 2 + 8;
+        a->data = realloc(a->data, (size_t)a->cap * 8);
+    }
+    if (a->data) ((int64_t*)a->data)[a->len++] = v;
+}
+static inline int64_t chasm_array_pop (ChasmCtx *ctx, ChasmArray *a)                     { (void)ctx; return a->len>0?((int64_t*)a->data)[--a->len]:0; }
+static inline int64_t chasm_array_get (ChasmCtx *ctx, ChasmArray *a, int64_t i)          { (void)ctx; return(i>=0&&i<a->len)?((int64_t*)a->data)[i]:0; }
+static inline void    chasm_array_set (ChasmCtx *ctx, ChasmArray *a, int64_t i, int64_t v){ (void)ctx; if(i>=0&&i<a->len)((int64_t*)a->data)[i]=v; }
+static inline int64_t chasm_array_len (ChasmCtx *ctx, ChasmArray *a)                     { (void)ctx; return a->len; }
+static inline void    chasm_array_clear(ChasmCtx *ctx, ChasmArray *a)                    { (void)ctx; a->len=0; }
+
+/* ---- string builder ---------------------------------------------- */
+typedef struct { char *buf; int64_t len; int64_t cap; } ChasmStrBuilder;
+static inline ChasmStrBuilder chasm_str_builder_new(ChasmCtx *ctx) {
+    (void)ctx; char *buf = (char*)malloc(64);
+    return (ChasmStrBuilder){buf, 0, 64};
+}
+static inline void chasm_str_builder_push(ChasmCtx *ctx, ChasmStrBuilder *b, int64_t c) {
+    (void)ctx;
+    if (b->len >= b->cap) { b->cap = b->cap*2+8; b->buf = (char*)realloc(b->buf, (size_t)b->cap); }
+    if (b->buf) b->buf[b->len++] = (char)c;
+}
+static inline void chasm_str_builder_append(ChasmCtx *ctx, ChasmStrBuilder *b, const char *s) {
+    (void)ctx; if (!s) return;
+    size_t sl = strlen(s);
+    while ((size_t)b->len + sl > (size_t)b->cap) { b->cap = b->cap*2+(int64_t)sl+8; b->buf = (char*)realloc(b->buf, (size_t)b->cap); }
+    if (b->buf) { memcpy(b->buf + b->len, s, sl); b->len += (int64_t)sl; }
+}
+static inline const char *chasm_str_builder_build(ChasmCtx *ctx, ChasmStrBuilder *b) {
+    if (!b || !b->buf) return "";
+    char *out = (char*)chasm_alloc(&ctx->frame, (size_t)b->len + 1, 1);
+    if (!out) return "";
+    memcpy(out, b->buf, (size_t)b->len); out[b->len] = '\0'; return out;
+}
+
+/* ---- file i/o ---------------------------------------------------- */
+static inline const char *chasm_file_read(ChasmCtx *ctx, const char *path) {
+    FILE *f = fopen(path, "rb"); if (!f) return "";
+    fseek(f, 0, SEEK_END); long sz = ftell(f); rewind(f);
+    char *buf = (char*)chasm_alloc(&ctx->persistent, (size_t)sz + 1, 1);
+    if (!buf) { fclose(f); return ""; }
+    fread(buf, 1, (size_t)sz, f); buf[sz] = '\0';
+    fclose(f); return buf;
+}
+static inline void chasm_file_write(ChasmCtx *ctx, const char *path, const char *content) {
+    (void)ctx; if (!path || !content) return;
+    FILE *f = fopen(path, "wb"); if (!f) return;
+    fwrite(content, 1, strlen(content), f); fclose(f);
+}
+static inline bool chasm_file_exists(ChasmCtx *ctx, const char *path) {
+    (void)ctx; if (!path) return false;
+    FILE *f = fopen(path, "rb"); if (!f) return false;
+    fclose(f); return true;
+}
+
+/* ---- i/o --------------------------------------------------------- */
+static inline void chasm_print(ChasmCtx *ctx, int64_t v)       { (void)ctx; printf("%lld\n", (long long)v); }
+static inline void chasm_print_f(ChasmCtx *ctx, double v)      { (void)ctx; printf("%g\n", v); }
+static inline void chasm_print_s(ChasmCtx *ctx, const char *v) { (void)ctx; printf("%s\n", v ? v : "(nil)"); }
+static inline void chasm_print_b(ChasmCtx *ctx, bool v)        { (void)ctx; printf("%s\n", v ? "true" : "false"); }
+static inline void chasm_log(ChasmCtx *ctx, int64_t v)         { (void)ctx; fprintf(stderr, "[log] %lld\n", (long long)v); }
+static inline void chasm_assert(ChasmCtx *ctx, bool cond) {
+    (void)ctx; if (!cond) { fprintf(stderr, "chasm: assertion failed\n"); abort(); }
+}
+static inline void chasm_assert_eq(ChasmCtx *ctx, int64_t a, int64_t b) {
+    (void)ctx; if (a != b) { fprintf(stderr, "chasm: assert_eq failed: %lld != %lld\n", (long long)a, (long long)b); abort(); }
+}
+static inline void chasm_todo(ChasmCtx *ctx) {
+    (void)ctx; fprintf(stderr, "chasm: todo() reached\n"); abort();
+}

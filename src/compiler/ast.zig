@@ -38,6 +38,11 @@ pub const StructLitField = struct {
     value: NodeIndex,
 };
 
+pub const EnumVariant = struct {
+    name: []const u8,
+    payload_types: []const []const u8, // empty = tag-only
+};
+
 pub const Node = union(enum) {
     // --- Declarations -------------------------------------------------------
 
@@ -123,6 +128,16 @@ pub const Node = union(enum) {
         span: Span,
     },
 
+    break_stmt: struct { span: Span },
+    continue_stmt: struct { span: Span },
+
+    /// `x, y = expr`  — destructuring assignment from a multi-return call
+    multi_assign: struct {
+        targets: [][]const u8,
+        value: NodeIndex,
+        span: Span,
+    },
+
     expr_stmt: struct {
         expr: NodeIndex,
         span: Span,
@@ -173,6 +188,12 @@ pub const Node = union(enum) {
     pattern_wildcard: struct { span: Span },                // _
     pattern_lit: struct { inner: NodeIndex, span: Span },   // 42, "str", true
     pattern_bind: struct { name: []const u8, span: Span },  // lowercase ident binding
+    /// Matches an enum variant with payload bindings: `Variant(name1, name2)`
+    pattern_variant: struct {
+        variant_name: []const u8,
+        bindings: []const []const u8, // names to bind payload fields to
+        span: Span,
+    },
 
     // --- String interpolation -----------------------------------------------
 
@@ -208,7 +229,7 @@ pub const Node = union(enum) {
     /// `enum Name { Variant1, Variant2, ... }`
     enum_decl: struct {
         name: []const u8,
-        variants: [][]const u8,
+        variants: []EnumVariant,
         span: Span,
     },
 
@@ -247,6 +268,24 @@ pub const Node = union(enum) {
         lifetime: LifetimeAnnotation,
         span: Span,
     },
+
+    /// `[]ElemType` — typed array annotation
+    array_type: struct {
+        elem_name: []const u8,
+        span: Span,
+    },
+
+    /// `(type1, type2)` — tuple return type annotation
+    tuple_type: struct {
+        types: []NodeIndex,
+        span: Span,
+    },
+
+    /// `(v1, v2, ...)` — tuple value (used in return and multi-assign RHS)
+    tuple_lit: struct {
+        values: []NodeIndex,
+        span: Span,
+    },
 };
 
 pub const FnParam = struct {
@@ -281,6 +320,9 @@ pub fn nodeSpan(pool: *const AstPool, idx: NodeIndex) ?Span {
         .for_in        => |n| n.span,
         .range         => |n| n.span,
         .return_stmt   => |n| n.span,
+        .break_stmt    => |n| n.span,
+        .continue_stmt => |n| n.span,
+        .multi_assign  => |n| n.span,
         .expr_stmt     => |n| n.span,
         .int_lit       => |n| n.span,
         .float_lit     => |n| n.span,
@@ -302,9 +344,13 @@ pub fn nodeSpan(pool: *const AstPool, idx: NodeIndex) ?Span {
         .pattern_atom  => |n| n.span,
         .pattern_wildcard => |n| n.span,
         .pattern_lit   => |n| n.span,
-        .pattern_bind  => |n| n.span,
-        .promote       => |n| n.span,
+        .pattern_bind    => |n| n.span,
+        .pattern_variant => |n| n.span,
+        .promote         => |n| n.span,
         .type_ref      => |n| n.span,
+        .array_type    => |n| n.span,
+        .tuple_type    => |n| n.span,
+        .tuple_lit     => |n| n.span,
         .str_interp    => |n| n.span,
         .array_lit     => |n| n.span,
         .struct_lit    => |n| n.span,

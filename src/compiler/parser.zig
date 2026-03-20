@@ -238,10 +238,25 @@ pub const Parser = struct {
         _ = try self.expect(.lbrace);
         self.skipNewlines();
 
-        var variants = std.ArrayListUnmanaged([]const u8){};
+        var variants = std.ArrayListUnmanaged(ast.EnumVariant){};
         while (!self.check(.rbrace) and !self.check(.eof)) {
             const vtok = try self.expect(.ident);
-            try variants.append(self.allocator, vtok.lexeme);
+            const variant_name = vtok.lexeme;
+            var payload_types = std.ArrayListUnmanaged([]const u8){};
+            // check for payload: Variant(Type1, Type2, ...)
+            if (self.peek().kind == .lparen) {
+                _ = self.advance(); // consume '('
+                while (!self.check(.rparen) and !self.check(.eof)) {
+                    const ty_tok = try self.expect(.ident);
+                    try payload_types.append(self.allocator, ty_tok.lexeme);
+                    if (self.check(.comma)) _ = self.advance();
+                }
+                _ = try self.expect(.rparen);
+            }
+            try variants.append(self.allocator, ast.EnumVariant{
+                .name = variant_name,
+                .payload_types = try payload_types.toOwnedSlice(self.allocator),
+            });
             _ = self.match(.comma);
             self.skipNewlines();
         }
@@ -376,7 +391,24 @@ pub const Parser = struct {
         }
         if (self.check(.ident)) {
             _ = self.advance();
-            return self.pool.push(.{ .pattern_bind = .{ .name = t.lexeme, .span = span } });
+            const name = t.lexeme;
+            // Check if this is a variant pattern: Variant(binding1, binding2)
+            if (name.len > 0 and name[0] >= 'A' and name[0] <= 'Z' and self.peek().kind == .lparen) {
+                _ = self.advance(); // consume '('
+                var bindings = std.ArrayListUnmanaged([]const u8){};
+                while (!self.check(.rparen) and !self.check(.eof)) {
+                    const b = try self.expect(.ident);
+                    try bindings.append(self.allocator, b.lexeme);
+                    if (self.check(.comma)) _ = self.advance();
+                }
+                _ = try self.expect(.rparen);
+                return self.pool.push(.{ .pattern_variant = .{
+                    .variant_name = name,
+                    .bindings = try bindings.toOwnedSlice(self.allocator),
+                    .span = span,
+                } });
+            }
+            return self.pool.push(.{ .pattern_bind = .{ .name = name, .span = span } });
         }
         self.diags.err(span, "expected pattern (identifier or _), found '{s}'", .{t.lexeme}) catch {};
         return error.UnexpectedToken;
@@ -392,6 +424,28 @@ pub const Parser = struct {
     }
 
     fn parseTypeExpr(self: *Parser) ParseError!NodeIndex {
+        // `[]ElemType` typed array annotation.
+        if (self.match(.lbracket)) |lbrak| {
+            _ = try self.expect(.rbracket);
+            const elem_tok = try self.expect(.ident);
+            return self.pool.push(.{ .array_type = .{
+                .elem_name = elem_tok.lexeme,
+                .span = spanOf(lbrak),
+            } });
+        }
+        // `(type1, type2, ...)` tuple type annotation.
+        if (self.match(.lparen)) |lparen_tok| {
+            var types = std.ArrayListUnmanaged(ast.NodeIndex){};
+            while (!self.check(.rparen) and !self.check(.eof)) {
+                try types.append(self.allocator, try self.parseTypeExpr());
+                _ = self.match(.comma);
+            }
+            _ = try self.expect(.rparen);
+            return self.pool.push(.{ .tuple_type = .{
+                .types = try types.toOwnedSlice(self.allocator),
+                .span = spanOf(lparen_tok),
+            } });
+        }
         const t = try self.expect(.ident);
         const lt = self.parseLifetimeAnnotation();
         return self.pool.push(.{ .type_ref = .{
@@ -435,11 +489,50 @@ pub const Parser = struct {
         if (self.check(.ident) and self.peekAheadKind(1) == .colon_colon) {
             return self.parseVarDecl();
         }
+        // Multi-assign: `ident, ident [, ident]* =` pattern.
+        if (self.check(.ident) and self.peekAheadKind(1) == .comma) {
+            if (try self.tryParseMultiAssign()) |node| return node;
+        }
         if (self.check(.return_kw)) return self.parseReturn();
+        if (self.check(.break_kw)) return self.parseBreak();
+        if (self.check(.continue_kw)) return self.parseContinue();
         if (self.check(.if_kw)) return self.parseIf();
         if (self.check(.while_kw)) return self.parseWhile();
         if (self.check(.for_kw)) return self.parseForIn();
         return self.parseExprStmt();
+    }
+
+    /// Try to parse `ident, ident, ... = expr` as a multi_assign.
+    /// Returns null if the pattern doesn't match (so caller can fallback).
+    fn tryParseMultiAssign(self: *Parser) ParseError!?NodeIndex {
+        // Scan ahead to confirm: ident (, ident)+ = pattern.
+        var offset: usize = 0;
+        while (self.peekAheadKind(offset) == .ident) {
+            offset += 1;
+            if (self.peekAheadKind(offset) == .comma) {
+                offset += 1; // skip comma
+            } else break;
+        }
+        if (self.peekAheadKind(offset) != .eq) return null;
+
+        // Parse the target name list.
+        const start = self.currentSpan();
+        var targets = std.ArrayListUnmanaged([]const u8){};
+        const first_tok = try self.expect(.ident);
+        try targets.append(self.allocator, first_tok.lexeme);
+        while (self.match(.comma)) |_| {
+            const name_tok = try self.expect(.ident);
+            try targets.append(self.allocator, name_tok.lexeme);
+        }
+        _ = try self.expect(.eq);
+        const value = try self.parseExpr();
+        try self.expectStmtEnd();
+
+        return try self.pool.push(.{ .multi_assign = .{
+            .targets = try targets.toOwnedSlice(self.allocator),
+            .value = value,
+            .span = start,
+        } });
     }
 
     fn parseVarDecl(self: *Parser) ParseError!NodeIndex {
@@ -469,10 +562,39 @@ pub const Parser = struct {
         _ = try self.expect(.return_kw);
         var value = ast.invalid_node;
         if (!self.check(.newline) and !self.check(.end_kw) and !self.check(.eof)) {
-            value = try self.parseExpr();
+            const first = try self.parseExpr();
+            // `return x, y` → tuple_lit
+            if (self.match(.comma)) |_| {
+                var values = std.ArrayListUnmanaged(ast.NodeIndex){};
+                try values.append(self.allocator, first);
+                try values.append(self.allocator, try self.parseExpr());
+                while (self.match(.comma)) |_| {
+                    try values.append(self.allocator, try self.parseExpr());
+                }
+                value = try self.pool.push(.{ .tuple_lit = .{
+                    .values = try values.toOwnedSlice(self.allocator),
+                    .span = start,
+                } });
+            } else {
+                value = first;
+            }
         }
         try self.expectStmtEnd();
         return self.pool.push(.{ .return_stmt = .{ .value = value, .span = start } });
+    }
+
+    fn parseBreak(self: *Parser) ParseError!NodeIndex {
+        const span = self.currentSpan();
+        _ = try self.expect(.break_kw);
+        try self.expectStmtEnd();
+        return self.pool.push(.{ .break_stmt = .{ .span = span } });
+    }
+
+    fn parseContinue(self: *Parser) ParseError!NodeIndex {
+        const span = self.currentSpan();
+        _ = try self.expect(.continue_kw);
+        try self.expectStmtEnd();
+        return self.pool.push(.{ .continue_stmt = .{ .span = span } });
     }
 
     fn parseIf(self: *Parser) ParseError!NodeIndex {
@@ -486,6 +608,24 @@ pub const Parser = struct {
 
         var else_block = ast.invalid_node;
         if (self.match(.else_kw)) |_| {
+            // `else if` (no newline between) → chain; `else\n  if` → regular else block.
+            if (self.check(.if_kw)) {
+                // `else if` chain — inner parseIf consumes its own `end`,
+                // so we wrap it in a block and return without a second `end_kw`.
+                const chain_if = try self.parseIf();
+                const stmts = try self.allocator.alloc(ast.NodeIndex, 1);
+                stmts[0] = chain_if;
+                else_block = try self.pool.push(.{ .block = .{
+                    .stmts = stmts,
+                    .span = start,
+                } });
+                return self.pool.push(.{ .if_stmt = .{
+                    .cond = cond,
+                    .then_block = then_block,
+                    .else_block = else_block,
+                    .span = start,
+                } });
+            }
             self.skipNewlines();
             else_block = try self.parseBlockBody(start, .end_kw);
         }
@@ -649,7 +789,24 @@ pub const Parser = struct {
         }
         if (self.check(.ident)) {
             _ = self.advance();
-            return self.pool.push(.{ .pattern_bind = .{ .name = t.lexeme, .span = span } });
+            const name = t.lexeme;
+            // Check if this is a variant pattern: Variant(binding1, binding2)
+            if (name.len > 0 and name[0] >= 'A' and name[0] <= 'Z' and self.peek().kind == .lparen) {
+                _ = self.advance(); // consume '('
+                var bindings = std.ArrayListUnmanaged([]const u8){};
+                while (!self.check(.rparen) and !self.check(.eof)) {
+                    const b = try self.expect(.ident);
+                    try bindings.append(self.allocator, b.lexeme);
+                    if (self.check(.comma)) _ = self.advance();
+                }
+                _ = try self.expect(.rparen);
+                return self.pool.push(.{ .pattern_variant = .{
+                    .variant_name = name,
+                    .bindings = try bindings.toOwnedSlice(self.allocator),
+                    .span = span,
+                } });
+            }
+            return self.pool.push(.{ .pattern_bind = .{ .name = name, .span = span } });
         }
         if (self.check(.int_lit) or self.check(.float_lit) or
             self.check(.string_lit) or self.check(.true_kw) or self.check(.false_kw))

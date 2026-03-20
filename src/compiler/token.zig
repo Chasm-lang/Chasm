@@ -24,6 +24,8 @@ pub const TokenKind = enum {
     while_kw,
     for_kw,
     in_kw,
+    break_kw,
+    continue_kw,
     case_kw,
     when_kw,
 
@@ -114,6 +116,8 @@ const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     .{ "while", .while_kw },
     .{ "for", .for_kw },
     .{ "in", .in_kw },
+    .{ "break", .break_kw },
+    .{ "continue", .continue_kw },
     .{ "case", .case_kw },
     .{ "when", .when_kw },
     .{ "do", .do_kw },
@@ -155,6 +159,9 @@ pub fn isLineCloser(kind: TokenKind) bool {
         .rbrace,
         .end_kw,
         .return_kw,
+        .break_kw,
+        .continue_kw,
+        .else_kw,
         => true,
         else => false,
     };
