@@ -1,6 +1,45 @@
 # Changelog
 
-## [0.5.1] — 2026-03-21 — Bug fix: match arm binding sentinel
+## [0.6.0] — 2026-03-21 — String interpolation, range, multiple return values
+
+### Summary
+
+Three new language features implemented end-to-end: string interpolation `"#{expr}"`, range literals `lo..hi`, and multiple return values `return a, b` / `a, b = f()`. Bootstrap fixpoint verified.
+
+### String interpolation
+
+`"hello #{name}, score #{score}"` expands at compile time into a `str_concat` tree.
+
+- **Lexer**: `..` lexed as `:dotdot` token; float literal scanner fixed so `1..10` no longer misparsed as `1.` float.
+- **Parser**: `parse_primary` for `:string_lit` scans for `#{`, re-lexes each interpolated expression, wraps it in `:interp_expr`, and builds a left-associative `str_concat` call tree. Bug fix: renamed local variable `lex` → `lx` in `parse_primary` to stop it shadowing the `lex()` lexer function (was causing the bootstrap binary to call a string pointer as a function, producing an infinite loop).
+- **Sema**: `:interp_expr` → type 4 (string).
+- **Codegen**: `:interp_expr` dispatches to `chasm_int_to_str`, `chasm_float_to_str`, `chasm_bool_to_str`, or passes strings through directly.
+
+### Range `lo..hi`
+
+`for i in 0..10 do` iterates integers 0–9.
+
+- **Parser**: `parse_add` detects `:dotdot` and emits `:range_expr` node.
+- **Sema**: `:range_expr` → type 7 (array).
+- **Codegen**: `:range_expr` → `chasm_range(ctx, lo, hi)`. For loop emitter now stores the iterable in a `ChasmArray _iter` temp variable to avoid double-evaluating rvalue expressions like `chasm_range(...)` (was causing `&rvalue` C compile error).
+- **Runtime**: `chasm_range(ctx, lo, hi)` added to `runtime/chasm_rt.h`.
+
+### Multiple return values
+
+`return a, b` and `lo, hi = f()` work for 2- and 3-value tuples.
+
+- **Parser**: `parse_return` collects comma-separated exprs into `:tuple_lit`; `parse_stmt` detects `ident, ident =` and emits `:tuple_dest`.
+- **Sema**: `:tuple_lit` → type 9; `:tuple_dest` registers each lhs name.
+- **Codegen**: `:tuple_lit` → `(ChasmTuple2){v0, v1}`; `:tuple_dest` emits `ChasmTuple2 _t = rhs; int64_t a = _t.v0; int64_t b = _t.v1;` at the outer scope (no wrapping `{}` block so variables are visible after the destructuring). Function return type detection (`fn_actual_ret_c`) walks the body for a `return_stmt` with a `tuple_lit` child and emits `ChasmTuple2`/`ChasmTuple3` instead of `int64_t`.
+- **Runtime**: `ChasmTuple2`, `ChasmTuple3` structs added to `runtime/chasm_rt.h`.
+
+### Bug fixes
+
+- macOS binary replacement: bootstrap install now uses `cp + mv` (atomic rename) instead of `cp` directly over the running binary, preventing macOS from keeping a stale in-memory image.
+
+---
+
+
 
 ### Bug fixes
 

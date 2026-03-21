@@ -1,0 +1,20 @@
+defp main() do
+  name = "world"
+  x = 42
+  msg = "hello #{name}, x is #{x}"
+  print(msg)
+
+  total = 0
+  for i in 0..5 do
+    total = total + i
+  end
+  print(total)
+
+  a, b = swap(3, 7)
+  print(a)
+  print(b)
+end
+
+defp swap(x :: int, y :: int) :: int do
+  return y, x
+end

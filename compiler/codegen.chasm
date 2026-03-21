@@ -406,6 +406,12 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
             pi2 = pi2 + 1
           end
           variant_name2 = str_slice(pat_lex, dot_pos2 + 1, str_len(pat_lex))
+          # Strip leading ':' if atom-style variant name
+          if str_len(variant_name2) > 0 do
+            if str_char_at(variant_name2, 0) == 58 do
+              variant_name2 = str_slice(variant_name2, 1, str_len(variant_name2))
+            end
+          end
           extract = str_concat(subj_c, str_concat(".", str_concat(variant_name2, ".v")))
           # Emit as a GNU statement expression: ({ type bind = extract; arm_val; })
           arm_val_c = str_concat("({ __auto_type ", str_concat(bind_name, str_concat(" = ", str_concat(extract, str_concat("; ", str_concat(arm_val_c, "; })"))))))
@@ -441,6 +447,39 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
     return emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.b)
   end
 
+  if tag == :interp_expr do
+    # String interpolation: emit chasm_to_str(ctx, val) — dispatches by type
+    inner_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    inner_t = types.get(node.a)
+    if inner_t == 4 do return inner_c end
+    if inner_t == 2 do return str_concat("chasm_float_to_str(ctx, ", str_concat(inner_c, ")")) end
+    if inner_t == 3 do return str_concat("chasm_bool_to_str(ctx, ", str_concat(inner_c, ")")) end
+    return str_concat("chasm_int_to_str(ctx, ", str_concat(inner_c, ")"))
+  end
+
+  if tag == :range_expr do
+    lo_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    hi_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.b)
+    return str_concat("chasm_range(ctx, ", str_concat(lo_c, str_concat(", ", str_concat(hi_c, ")"))))
+  end
+
+  if tag == :tuple_lit do
+    ts = node.a
+    tl = node.b
+    if tl == 2 do
+      v0 = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, ch.get(ts))
+      v1 = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, ch.get(ts + 1))
+      return str_concat("(ChasmTuple2){", str_concat(v0, str_concat(", ", str_concat(v1, "}"))))
+    end
+    if tl == 3 do
+      v0 = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, ch.get(ts))
+      v1 = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, ch.get(ts + 1))
+      v2 = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, ch.get(ts + 2))
+      return str_concat("(ChasmTuple3){", str_concat(v0, str_concat(", ", str_concat(v1, str_concat(", ", str_concat(v2, "}"))))))
+    end
+    return "0"
+  end
+
   return "0"
 end
 
@@ -453,7 +492,8 @@ defp is_stmt_tag(tag :: atom) :: bool do
   return tag == :var_decl or tag == :assign or tag == :return_stmt or
          tag == :if_stmt   or tag == :while_stmt or tag == :for_stmt  or
          tag == :break_stmt or tag == :continue_stmt or
-         tag == :call or tag == :method_call or tag == :at_assign
+         tag == :call or tag == :method_call or tag == :at_assign or
+         tag == :tuple_dest
 end
 
 # ---- Emit block body (forward reference: emit_stmt defined below) -----------
@@ -573,10 +613,12 @@ defp emit_stmt(pool :: []Node, ch :: []int, types :: []int,
     esuf     = array_elem_suffix(structs, elem_tid)
     print(str_concat(ind, "{"))
     ind1 = str_concat(ind, "  ")
-    print(str_concat(ind1, str_concat("int64_t _fi = 0, _fl = (", str_concat(iter_c, ").len;"))))
+    # Store iter in a temp to avoid double-evaluation (e.g. range rvalue)
+    print(str_concat(ind1, str_concat("ChasmArray _iter = ", str_concat(iter_c, ";"))))
+    print(str_concat(ind1, "int64_t _fi = 0, _fl = _iter.len;"))
     print(str_concat(ind1, "while (_fi < _fl) {"))
     ind2 = str_concat(ind1, "  ")
-    print(str_concat(ind2, str_concat(elem_c, str_concat(" ", str_concat(var_n, str_concat(" = chasm_array_get", str_concat(esuf, str_concat("(ctx, &", str_concat(iter_c, ", _fi);")))))))))
+    print(str_concat(ind2, str_concat(elem_c, str_concat(" ", str_concat(var_n, str_concat(" = chasm_array_get", str_concat(esuf, "(ctx, &_iter, _fi);")))))))
     _ve = emit_block_body(pool, ch, types, structs, fns, fields, var_elems, ve_len, depth + 2, node.b)
     print(str_concat(ind2, "_fi++;"))
     print(str_concat(ind1, "}"))
@@ -592,6 +634,49 @@ defp emit_stmt(pool :: []Node, ch :: []int, types :: []int,
     attr_name = str_slice(node.name, 1, str_len(node.name))
     val_c     = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.b)
     print(str_concat(ind, str_concat("g_", str_concat(attr_name, str_concat(" = ", str_concat(val_c, ";"))))))
+    return ve_len
+  end
+
+  if tag == :tuple_dest do
+    # a, b = expr  →  ChasmTuple2 _t = expr; int64_t a = _t.v0; int64_t b = _t.v1;
+    rhs_c  = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    names  = node.name
+    # Count commas to determine tuple size
+    tcount = 1
+    ci2    = 0
+    while ci2 < str_len(names) do
+      if str_char_at(names, ci2) == 44 do tcount = tcount + 1 end
+      ci2 = ci2 + 1
+    end
+    ttype = "ChasmTuple2"
+    if tcount == 3 do ttype = "ChasmTuple3" end
+    print(str_concat(ind, str_concat(ttype, str_concat(" _t = ", str_concat(rhs_c, ";")))))
+    # Emit each assignment at the same indent level (no wrapping block)
+    vi2   = 0
+    start2 = 0
+    ni2   = 0
+    while ni2 <= str_len(names) do
+      is_end2   = ni2 == str_len(names)
+      is_comma2 = false
+      if ni2 < str_len(names) do
+        if str_char_at(names, ni2) == 44 do is_comma2 = true end
+      end
+      if is_end2 or is_comma2 do
+        vname2 = str_slice(names, start2, ni2)
+        if str_len(vname2) > 0 do
+          field_s = str_concat("v", int_to_str(vi2))
+          if ve_declared(var_elems, ve_len, vname2) do
+            print(str_concat(ind, str_concat(vname2, str_concat(" = _t.", str_concat(field_s, ";")))))
+          else
+            ve_len = ve_push(var_elems, ve_len, vname2, 0)
+            print(str_concat(ind, str_concat("int64_t ", str_concat(vname2, str_concat(" = _t.", str_concat(field_s, ";"))))))
+          end
+          vi2 = vi2 + 1
+        end
+        start2 = ni2 + 1
+      end
+      ni2 = ni2 + 1
+    end
     return ve_len
   end
 
@@ -793,13 +878,42 @@ end
 
 # ---- Emit forward declarations -----------------------------------------------
 
+# ---- Detect actual C return type for a function (handles tuple returns) ------
+
+defp fn_actual_ret_c(pool :: []Node, ch :: []int, fn_idx :: int, structs :: []StructDef) :: string do
+  fn_node = pool.get(fn_idx)
+  ret_tid = fn_split_ret(fn_node.name, structs)
+  # Walk body block looking for a return_stmt with tuple_lit child
+  body    = fn_node.c
+  if body < 0 do return c_type(ret_tid, structs) end
+  bnode   = pool.get(body)
+  bs      = bnode.a
+  bl      = bnode.b
+  i = 0
+  while i < bl do
+    si   = ch.get(bs + i)
+    sn   = pool.get(si)
+    if sn.tag == :return_stmt do
+      if sn.a >= 0 do
+        rn = pool.get(sn.a)
+        if rn.tag == :tuple_lit do
+          if rn.b == 3 do return "ChasmTuple3" end
+          return "ChasmTuple2"
+        end
+      end
+    end
+    i = i + 1
+  end
+  return c_type(ret_tid, structs)
+end
+
 defp emit_fwd_decls(pool :: []Node, ch :: []int, structs :: []StructDef, fns :: []FnSig) do
   if fns.len == 0 do return end
   print("/* Forward declarations */")
   i = 0
   while i < fns.len do
     f        = fns.get(i)
-    ret_c    = c_type(f.ret_tid, structs)
+    ret_c    = fn_actual_ret_c(pool, ch, f.node_idx, structs)
     fn_node  = pool.get(f.node_idx)
     ps       = fn_node.a
     pc       = fn_node.b
@@ -830,8 +944,7 @@ defp emit_fn(pool :: []Node, ch :: []int, types :: []int,
   params_count = fn_node.b
   body         = fn_node.c
   fn_name      = fn_split_name(fn_node.name)
-  ret_tid      = fn_split_ret(fn_node.name, structs)
-  ret_c        = c_type(ret_tid, structs)
+  ret_c        = fn_actual_ret_c(pool, ch, fn_idx, structs)
   # Build parameter list and populate var_elems for params
   params_str = ""
   var_elems  :: []VarElem = make_ve_pool(1024)

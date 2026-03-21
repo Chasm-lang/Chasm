@@ -301,6 +301,18 @@ static inline bool chasm_file_exists(ChasmCtx *ctx, const char *path) {
     fclose(f); return true;
 }
 
+/* ---- tuples ------------------------------------------------------ */
+typedef struct { int64_t v0; int64_t v1; }           ChasmTuple2;
+typedef struct { int64_t v0; int64_t v1; int64_t v2; } ChasmTuple3;
+
+/* ---- range ------------------------------------------------------- */
+static inline ChasmArray chasm_range(ChasmCtx *ctx, int64_t lo, int64_t hi) {
+    int64_t n = hi > lo ? hi - lo : 0;
+    ChasmArray a = chasm_array_new(ctx, n > 0 ? n : 1);
+    for (int64_t i = 0; i < n; i++) chasm_array_push(ctx, &a, lo + i);
+    return a;
+}
+
 /* ---- i/o --------------------------------------------------------- */
 static inline void chasm_print(ChasmCtx *ctx, int64_t v)       { (void)ctx; printf("%lld\n", (long long)v); }
 static inline void chasm_print_f(ChasmCtx *ctx, double v)      { (void)ctx; printf("%g\n", v); }

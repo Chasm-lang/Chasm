@@ -108,31 +108,122 @@ end
 
 defp parse_primary(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, cp :: int, pos :: int) :: ParseResult do
   k    = tok_kind(tokens, pos)
-  lex  = tok_lex(tokens, pos)
+  lx   = tok_lex(tokens, pos)
   line = tok_line(tokens, pos)
   col  = tok_col(tokens, pos)
   if k == :int_lit do
     pos = pos + 1
     node_idx = np
-    np = alloc_node(pool, np, :int_lit, 0, 0, 0, lex, line, col)
+    np = alloc_node(pool, np, :int_lit, 0, 0, 0, lx, line, col)
     return ParseResult{ pos: pos, np: np, cp: cp, node_idx: node_idx }
   end
   if k == :float_lit do
     pos = pos + 1
     node_idx = np
-    np = alloc_node(pool, np, :float_lit, 0, 0, 0, lex, line, col)
+    np = alloc_node(pool, np, :float_lit, 0, 0, 0, lx, line, col)
     return ParseResult{ pos: pos, np: np, cp: cp, node_idx: node_idx }
   end
   if k == :string_lit do
     pos = pos + 1
-    node_idx = np
-    np = alloc_node(pool, np, :string_lit, 0, 0, 0, lex, line, col)
-    return ParseResult{ pos: pos, np: np, cp: cp, node_idx: node_idx }
+    # Check for string interpolation: "...#{expr}..."
+    # Scan the raw lexeme (without surrounding quotes) for #{
+    raw     = str_slice(lx, 1, str_len(lx) - 1)
+    has_interp = false
+    si2 = 0
+    while si2 < str_len(raw) - 1 do
+      if str_char_at(raw, si2) == 35 and str_char_at(raw, si2 + 1) == 123 do
+        has_interp = true
+        si2 = str_len(raw)
+      end
+      si2 = si2 + 1
+    end
+    if has_interp == false do
+      node_idx = np
+      np = alloc_node(pool, np, :string_lit, 0, 0, 0, lx, line, col)
+      return ParseResult{ pos: pos, np: np, cp: cp, node_idx: node_idx }
+    end
+    # Build str_concat tree from interpolated parts
+    # result_idx starts as -1 (no parts yet)
+    result_idx = -1
+    seg_start  = 0
+    ri         = 0
+    while ri <= str_len(raw) do
+      found_interp = false
+      if ri < str_len(raw) - 1 do
+        if str_char_at(raw, ri) == 35 and str_char_at(raw, ri + 1) == 123 do
+          found_interp = true
+        end
+      end
+      at_end = ri == str_len(raw)
+      if found_interp or at_end do
+        # Emit literal segment [seg_start, ri)
+        if ri > seg_start do
+          seg = str_concat("\042", str_concat(str_slice(raw, seg_start, ri), "\042"))
+          lit_idx = np
+          np = alloc_node(pool, np, :string_lit, 0, 0, 0, seg, line, col)
+          if result_idx < 0 do
+            result_idx = lit_idx
+          else
+            concat_idx = np
+            np = alloc_node(pool, np, :call, cp, 2, 0, "str_concat", line, col)
+            ch.set(cp, result_idx)
+            cp = cp + 1
+            ch.set(cp, lit_idx)
+            cp = cp + 1
+            result_idx = concat_idx
+          end
+        end
+        if at_end do
+          ri = ri + 1
+        end
+        if found_interp do
+          # Find matching }
+          ri = ri + 2  # skip #{
+          brace_start = ri
+          depth2 = 1
+          while ri < str_len(raw) and depth2 > 0 do
+            if str_char_at(raw, ri) == 123 do depth2 = depth2 + 1 end
+            if str_char_at(raw, ri) == 125 do depth2 = depth2 - 1 end
+            if depth2 > 0 do ri = ri + 1 end
+          end
+          expr_src = str_slice(raw, brace_start, ri)
+          ri = ri + 1  # skip }
+          seg_start = ri
+          # Re-lex and parse the expression
+          expr_tokens = lex(expr_src)
+          er = parse_expr(expr_tokens, pool, np, ch, cp, 0)
+          np = er.np
+          cp = er.cp
+          expr_node = er.node_idx
+          wrap_idx = np
+          np = alloc_node(pool, np, :interp_expr, expr_node, 0, 0, "", line, col)
+          if result_idx < 0 do
+            result_idx = wrap_idx
+          else
+            concat_idx = np
+            np = alloc_node(pool, np, :call, cp, 2, 0, "str_concat", line, col)
+            ch.set(cp, result_idx)
+            cp = cp + 1
+            ch.set(cp, wrap_idx)
+            cp = cp + 1
+            result_idx = concat_idx
+          end
+        end
+      else
+        ri = ri + 1
+      end
+    end
+    if result_idx < 0 do
+      # Empty string
+      result_idx = np
+      np = alloc_node(pool, np, :string_lit, 0, 0, 0, "\042\042", line, col)
+    end
+    return ParseResult{ pos: pos, np: np, cp: cp, node_idx: result_idx }
   end
   if k == :atom_lit do
     pos = pos + 1
     node_idx = np
-    np = alloc_node(pool, np, :atom_lit, 0, 0, 0, lex, line, col)
+    np = alloc_node(pool, np, :atom_lit, 0, 0, 0, lx, line, col)
     return ParseResult{ pos: pos, np: np, cp: cp, node_idx: node_idx }
   end
   if k == :true_kw do
@@ -189,13 +280,13 @@ defp parse_primary(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, cp
     return ParseResult{ pos: pos, np: np, cp: cp, node_idx: ei }
   end
   if k == :at_ident do
-    name     = lex
+    name     = lx
     node_idx = np
     np = alloc_node(pool, np, :at_ref, 0, 0, 0, name, line, col)
     return ParseResult{ pos: pos + 1, np: np, cp: cp, node_idx: node_idx }
   end
   if k == :ident do
-    name = lex
+    name = lx
     pos  = pos + 1
     if tok_kind(tokens, pos) == :lparen do
       pos = pos + 1
@@ -352,6 +443,12 @@ defp parse_primary(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, cp
         bind_line = tok_line(tokens, pos)
         bind_col  = tok_col(tokens, pos)
         pos = pos + 1
+        # Skip optional :: type annotation in binding
+        if tok_kind(tokens, pos) == :colon_colon do
+          pos = pos + 1  # skip ::
+          ta2 = parse_type_ann(tokens, pos)
+          pos = ta2.pos  # skip type name
+        end
         binding_idx = np
         np = alloc_node(pool, np, :ident, 0, 0, 0, bind_name, bind_line, bind_col)
         if tok_kind(tokens, pos) == :rparen do
@@ -386,7 +483,7 @@ defp parse_primary(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, cp
   end
   pos = pos + 1
   node_idx = np
-  np = alloc_node(pool, np, :error_node, 0, 0, 0, lex, line, col)
+  np = alloc_node(pool, np, :error_node, 0, 0, 0, lx, line, col)
   return ParseResult{ pos: pos, np: np, cp: cp, node_idx: node_idx }
 end
 
@@ -526,6 +623,20 @@ defp parse_add(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, cp :: 
   cp  = r.cp
   lhs = r.node_idx
   k   = tok_kind(tokens, pos)
+  # Range operator: lo..hi → :range_expr
+  if k == :dotdot do
+    line = tok_line(tokens, pos)
+    col  = tok_col(tokens, pos)
+    pos  = pos + 1
+    r    = parse_mul(tokens, pool, np, ch, cp, pos)
+    pos  = r.pos
+    np   = r.np
+    cp   = r.cp
+    rhs  = r.node_idx
+    node = np
+    np   = alloc_node(pool, np, :range_expr, lhs, rhs, 0, "", line, col)
+    return ParseResult{ pos: pos, np: np, cp: cp, node_idx: node }
+  end
   while k == :plus or k == :minus do
     op   = tok_lex(tokens, pos)
     line = tok_line(tokens, pos)
@@ -662,6 +773,29 @@ defp parse_return(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, cp 
     np  = r.np
     cp  = r.cp
     val = r.node_idx
+    # Multiple return values: return a, b, c
+    if tok_kind(tokens, pos) == :comma do
+      val_list :: []int = []
+      val_list.push(val)
+      while tok_kind(tokens, pos) == :comma do
+        pos = pos + 1
+        r2  = parse_expr(tokens, pool, np, ch, cp, pos)
+        pos = r2.pos
+        np  = r2.np
+        cp  = r2.cp
+        val_list.push(r2.node_idx)
+      end
+      ts = cp
+      i  = 0
+      while i < val_list.len do
+        ch.set(cp, val_list.get(i))
+        cp = cp + 1
+        i  = i + 1
+      end
+      tup_idx = np
+      np  = alloc_node(pool, np, :tuple_lit, ts, val_list.len, 0, "", line, col)
+      val = tup_idx
+    end
   end
   node_idx = np
   np = alloc_node(pool, np, :return_stmt, val, 0, 0, "", line, col)
@@ -860,6 +994,31 @@ defp parse_stmt(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, cp ::
     np  = alloc_node(pool, np, :ident, 0, 0, 0, var_name, line, col)
     node_idx = np
     np = alloc_node(pool, np, :assign, lhs, val, 0, "", line, col)
+    return ParseResult{ pos: pos, np: np, cp: cp, node_idx: node_idx }
+  end
+  # tuple destructuring: a, b = expr
+  if k == :ident and k2 == :comma do
+    # Collect all lhs names
+    name_list :: []int = []
+    name_list.push(0)  # placeholder count; we store names as a comma-joined string
+    names_str = tok_lex(tokens, pos)
+    pos = pos + 1  # consume first ident
+    while tok_kind(tokens, pos) == :comma do
+      pos = pos + 1
+      next_name = tok_lex(tokens, pos)
+      pos = pos + 1
+      names_str = str_concat(names_str, str_concat(",", next_name))
+    end
+    if tok_kind(tokens, pos) == :eq do
+      pos = pos + 1
+    end
+    r   = parse_expr(tokens, pool, np, ch, cp, pos)
+    pos = r.pos
+    np  = r.np
+    cp  = r.cp
+    val = r.node_idx
+    node_idx = np
+    np = alloc_node(pool, np, :tuple_dest, val, 0, 0, names_str, line, col)
     return ParseResult{ pos: pos, np: np, cp: cp, node_idx: node_idx }
   end
   return parse_expr(tokens, pool, np, ch, cp, pos)

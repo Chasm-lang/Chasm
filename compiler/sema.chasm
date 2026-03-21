@@ -463,11 +463,33 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
     return rt
   end
 
-  if tag == :pipe_expr do
-    _lt = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
-    rt  = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.b)
-    types.set(idx, rt)
-    return rt
+  if tag == :interp_expr do
+    # String interpolation fragment — wraps an expression, result is string
+    _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    types.set(idx, 4)
+    return 4
+  end
+
+  if tag == :range_expr do
+    # lo..hi — produces an array of ints
+    _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.b)
+    types.set(idx, 7)
+    return 7
+  end
+
+  if tag == :tuple_lit do
+    # Multiple return values — walk all children
+    ts = node.a
+    tl = node.b
+    ti = 0
+    while ti < tl do
+      ci = ch.get(ts + ti)
+      _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, ci)
+      ti = ti + 1
+    end
+    types.set(idx, 9)
+    return 9
   end
 
   if tag == :struct_lit do
@@ -573,6 +595,37 @@ defp sema_stmt(pool :: []Node, ch :: []int, types :: []int,
     return sym_len
   end
 
+  if tag == :tuple_dest do
+    # a, b = expr — register each lhs name as int (type 1) for now
+    _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    # Parse comma-separated names from node.name
+    names = node.name
+    ni    = 0
+    start = 0
+    while ni <= str_len(names) do
+      is_end = ni == str_len(names)
+      is_comma = false
+      if ni < str_len(names) do
+        if str_char_at(names, ni) == 44 do
+          is_comma = true
+        end
+      end
+      if is_end or is_comma do
+        vname = str_slice(names, start, ni)
+        if str_len(vname) > 0 do
+          already = sym_contains(syms, sym_len, vname)
+          if already == false do
+            sym_len = sym_push(syms, sym_len, vname, 1, 0)
+          end
+        end
+        start = ni + 1
+      end
+      ni = ni + 1
+    end
+    types.set(idx, 0)
+    return sym_len
+  end
+
   # Expression statement (call, method_call, etc.)
   _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, idx)
   return sym_len
@@ -672,5 +725,6 @@ defp type_name(tid :: int) :: string do
   if tid == 6 do return "void" end
   if tid == 7 do return "array" end
   if tid == 8 do return "strbuild" end
+  if tid == 9 do return "tuple" end
   return str_concat("struct#", int_to_str(tid))
 end

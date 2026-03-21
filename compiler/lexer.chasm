@@ -131,8 +131,16 @@ defp lex(src :: string) :: []Token do
       continue
     end
     if ch == 46 do
-      tokens.push(Token{ kind: :dot,     lexeme: str_slice(src, start, i), line: start_line, col: start_col })
-      last_kind = :dot
+      # Check for .. (range)
+      if i < n and str_char_at(src, i) == 46 do
+        i   = i + 1
+        col = col + 1
+        tokens.push(Token{ kind: :dotdot, lexeme: str_slice(src, start, i), line: start_line, col: start_col })
+        last_kind = :dotdot
+      else
+        tokens.push(Token{ kind: :dot,     lexeme: str_slice(src, start, i), line: start_line, col: start_col })
+        last_kind = :dot
+      end
       continue
     end
     if ch == 43 do
@@ -300,15 +308,18 @@ defp lex(src :: string) :: []Token do
         col = col + 1
       end
       if i < n and str_char_at(src, i) == 46 do
-        i   = i + 1
-        col = col + 1
-        while i < n and is_digit(str_char_at(src, i)) do
+        # Only a float if the char after '.' is a digit (not another '.' for range)
+        if i + 1 < n and is_digit(str_char_at(src, i + 1)) do
           i   = i + 1
           col = col + 1
+          while i < n and is_digit(str_char_at(src, i)) do
+            i   = i + 1
+            col = col + 1
+          end
+          tokens.push(Token{ kind: :float_lit, lexeme: str_slice(src, start, i), line: start_line, col: start_col })
+          last_kind = :float_lit
+          continue
         end
-        tokens.push(Token{ kind: :float_lit, lexeme: str_slice(src, start, i), line: start_line, col: start_col })
-        last_kind = :float_lit
-        continue
       end
       tokens.push(Token{ kind: :int_lit, lexeme: str_slice(src, start, i), line: start_line, col: start_col })
       last_kind = :int_lit
