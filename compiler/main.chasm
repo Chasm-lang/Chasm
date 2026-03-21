@@ -1,0 +1,23 @@
+# Bootstrap Chasm compiler — driver (entry point).
+
+def main() do
+  src = file_read("/tmp/sema_combined.chasm")
+
+  tokens  = lex(src)
+  pool    :: []Node = make_node_pool(60000)
+  ch      :: []int  = make_int_pool(120000)
+
+  r    = parse_file(tokens, pool, 0, ch, 0, 0)
+  np   = r.np
+  root = r.node_idx
+
+  types   :: []int = make_int_pool(60000)
+  syms    :: []Sym = make_sym_pool(2000)
+
+  structs = collect_struct_list(pool, ch, root, 10)
+  fields  = collect_field_list(pool, ch, structs)
+  fns     = collect_fn_list(pool, ch, root, structs)
+  sema_all(pool, ch, root, types, syms, fns, structs, fields)
+
+  codegen(pool, ch, root, types, structs, fields, fns)
+end

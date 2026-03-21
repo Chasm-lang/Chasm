@@ -12,20 +12,38 @@ BIN_DIR="$PREFIX/bin"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Building chasm (ReleaseFast)..."
-cd "$SCRIPT_DIR"
-zig build -Doptimize=ReleaseFast
+# ---------------------------------------------------------------------------
+# Pre-self-hosting (< v0.2.0):
+#   This script built the Chasm compiler from Zig source using `zig build`.
+#
+# Post-self-hosting (>= v0.2.0):
+#   The Zig compiler is archived in archive/zig-compiler/ and frozen.
+#   The bootstrap binary is pre-built and lives in bootstrap/bin/.
+#   This script installs the pre-built binary directly — no Zig required.
+#
+#   Once the self-hosted compiler (compiler/*.chasm) is complete, this
+#   script will be updated to build from Chasm source instead.
+# ---------------------------------------------------------------------------
 
 echo "Installing to $BIN_DIR..."
 mkdir -p "$BIN_DIR"
-cp zig-out/bin/chasm     "$BIN_DIR/chasm"
-cp zig-out/bin/chasm-lsp "$BIN_DIR/chasm-lsp"
-chmod +x "$BIN_DIR/chasm" "$BIN_DIR/chasm-lsp"
+
+# Build the Go CLI driver.
+if ! command -v go &>/dev/null; then
+    echo "ERROR: 'go' not found in PATH."
+    echo "Install Go from https://go.dev/dl/ then re-run this script."
+    exit 1
+fi
+
+echo "building chasm CLI..."
+go build -o "$BIN_DIR/chasm" "$SCRIPT_DIR/cmd/chasm/"
 
 echo ""
 echo "Installed:"
 echo "  $BIN_DIR/chasm"
-echo "  $BIN_DIR/chasm-lsp"
+echo ""
+echo "Set CHASM_HOME if the repo is not auto-detected:"
+echo "  export CHASM_HOME=\"$SCRIPT_DIR\""
 
 # Check if BIN_DIR is in PATH
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
@@ -94,5 +112,5 @@ install_extension "$HOME/.cursor/extensions"  "$HOME/.cursor/extensions/extensio
 install_extension "$HOME/.vscode/extensions"  "$HOME/.vscode/extensions/extensions.json"
 
 echo ""
-echo "Done!  Try: chasm --version"
+echo "Done!  Try: chasm compile hello.chasm"
 echo "Restart Cursor / VS Code to activate the Chasm extension."

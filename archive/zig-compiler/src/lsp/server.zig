@@ -836,18 +836,153 @@ pub const Server = struct {
         try self.docs.put(alloc, uri_owned, text_owned);
     }
 
+    fn emptyDiagnostics(uri: []const u8, writer: anytype, alloc: std.mem.Allocator) !void {
+        var buf: std.ArrayListUnmanaged(u8) = .{};
+        try buf.appendSlice(alloc, "{\"uri\":");
+        try jsonStr(&buf, alloc, uri);
+        try buf.appendSlice(alloc, ",\"diagnostics\":[]}");
+        const json = try buf.toOwnedSlice(alloc);
+        defer alloc.free(json);
+        try jsonrpc.writeNotification(writer, "textDocument/publishDiagnostics", json);
+    }
+
     fn publishDiagnostics(
         self: *Server,
         uri: []const u8,
         writer: anytype,
         alloc: std.mem.Allocator,
     ) !void {
+        // bootstrap/ files are frozen source — never show diagnostics.
+        if (std.mem.indexOf(u8, uri, "/bootstrap/") != null) {
+            return emptyDiagnostics(uri, writer, alloc);
+        }
+
+        // compiler/ files are a concatenated unit — analyze together and
+        // map diagnostics back to each individual file.
+        if (std.mem.indexOf(u8, uri, "/compiler/") != null) {
+            return self.publishDiagnosticsCompilerDir(uri, writer, alloc);
+        }
+
         const source = self.docs.get(uri) orelse return;
         var result = try analyzeWithUri(source, uri, alloc);
         defer result.deinit();
         const params_json = try buildDiagnosticsJson(uri, &result, alloc);
         defer alloc.free(params_json);
         try jsonrpc.writeNotification(writer, "textDocument/publishDiagnostics", params_json);
+    }
+
+    fn publishDiagnosticsCompilerDir(
+        self: *Server,
+        uri: []const u8,
+        writer: anytype,
+        alloc: std.mem.Allocator,
+    ) !void {
+        const file_path: []const u8 = if (std.mem.startsWith(u8, uri, "file://"))
+            uri["file://".len..]
+        else
+            uri;
+        const dir_path = std.fs.path.dirname(file_path) orelse ".";
+
+        // Fixed concatenation order — matches build_stage2.sh.
+        const order = [_][]const u8{ "lexer", "parser", "sema", "codegen", "main" };
+
+        const FileInfo = struct {
+            uri:        []u8,
+            start_line: u32, // 0-indexed line in combined source (after prelude stripped)
+            line_count: u32,
+        };
+
+        var combined    = std.ArrayListUnmanaged(u8){};
+        var file_infos  = std.ArrayListUnmanaged(FileInfo){};
+        defer {
+            for (file_infos.items) |fi| alloc.free(fi.uri);
+            file_infos.deinit(alloc);
+            combined.deinit(alloc);
+        }
+
+        for (order) |base| {
+            const fname = try std.fmt.allocPrint(alloc, "{s}.chasm", .{base});
+            defer alloc.free(fname);
+            const fpath = try std.fs.path.join(alloc, &.{ dir_path, fname });
+            defer alloc.free(fpath);
+            const furi  = try std.fmt.allocPrint(alloc, "file://{s}", .{fpath});
+            errdefer alloc.free(furi);
+
+            // Prefer the in-memory (unsaved) version; fall back to disk.
+            var disk_buf: ?[]u8 = null;
+            const source: []const u8 = blk: {
+                if (self.docs.get(furi)) |s| break :blk s;
+                const f = std.fs.openFileAbsolute(fpath, .{}) catch {
+                    alloc.free(furi);
+                    continue; // file doesn't exist yet — skip
+                };
+                defer f.close();
+                disk_buf = try f.readToEndAlloc(alloc, 16 * 1024 * 1024);
+                break :blk disk_buf.?;
+            };
+            defer if (disk_buf) |b| alloc.free(b);
+
+            const start_line: u32 = @intCast(std.mem.count(u8, combined.items, "\n"));
+            const line_count: u32 = @intCast(std.mem.count(u8, source, "\n") + 1);
+
+            try file_infos.append(alloc, .{
+                .uri        = furi,
+                .start_line = start_line,
+                .line_count = line_count,
+            });
+            try combined.appendSlice(alloc, source);
+            if (combined.items.len > 0 and combined.items[combined.items.len - 1] != '\n')
+                try combined.append(alloc, '\n');
+        }
+
+        if (combined.items.len == 0) return;
+
+        var result = try analyzeWithUri(combined.items, uri, alloc);
+        defer result.deinit();
+
+        // Publish diagnostics for every compiler file, mapping line numbers back.
+        for (file_infos.items) |fi| {
+            var buf: std.ArrayListUnmanaged(u8) = .{};
+            defer buf.deinit(alloc);
+            try buf.appendSlice(alloc, "{\"uri\":");
+            try jsonStr(&buf, alloc, fi.uri);
+            try buf.appendSlice(alloc, ",\"diagnostics\":[");
+
+            var first = true;
+            for (result.diags.items.items) |d| {
+                const s = d.span;
+                if (s.line <= result.prelude_line_offset) continue;
+                // Convert 1-indexed sema line → 0-indexed combined line.
+                const combined_line: u32 = s.line - result.prelude_line_offset - 1;
+                if (combined_line < fi.start_line) continue;
+                if (combined_line >= fi.start_line + fi.line_count) continue;
+
+                const local_line: u32 = combined_line - fi.start_line;
+                const sc: u32 = if (s.col > 0) s.col - 1 else 0;
+                const ec: u32 = sc + s.len;
+                const severity: u32 = switch (d.level) {
+                    .err  => 1,
+                    .warn => 2,
+                    .note => 3,
+                };
+
+                if (!first) try buf.append(alloc, ',');
+                first = false;
+
+                const hdr = try std.fmt.allocPrint(alloc,
+                    \\{{"range":{{"start":{{"line":{d},"character":{d}}},"end":{{"line":{d},"character":{d}}}}},"severity":{d},"source":"chasm","message":
+                    , .{ local_line, sc, local_line, ec, severity });
+                defer alloc.free(hdr);
+                try buf.appendSlice(alloc, hdr);
+                try jsonStr(&buf, alloc, d.message);
+                try buf.append(alloc, '}');
+            }
+
+            try buf.appendSlice(alloc, "]}");
+            const params_json = try buf.toOwnedSlice(alloc);
+            defer alloc.free(params_json);
+            try jsonrpc.writeNotification(writer, "textDocument/publishDiagnostics", params_json);
+        }
     }
 };
 

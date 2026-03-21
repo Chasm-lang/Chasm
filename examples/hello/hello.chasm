@@ -1,0 +1,4 @@
+def main() do
+  print("Hello from Chasm!")
+  print(1 + 2)
+end

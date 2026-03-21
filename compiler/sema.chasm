@@ -1,0 +1,584 @@
+# Bootstrap Chasm compiler — semantic analysis and type inference.
+
+# ---- Symbol table ------------------------------------------------------------
+# Pre-allocated flat array; sym_len tracks the logical size.
+# Ints are passed by value, so callers own their sym_len.
+# sema_block gets a copy — its additions are discarded on return.
+
+defstruct Sym do
+  name      :: string
+  type_id   :: int
+  elem_type :: int
+end
+
+defp make_sym_pool(cap :: int) :: []Sym do
+  pool  :: []Sym = []
+  empty :: Sym   = Sym{ name: "", type_id: 0, elem_type: 0 }
+  i = 0
+  while i < cap do
+    pool.push(empty)
+    i = i + 1
+  end
+  return pool
+end
+
+defp sym_lookup(syms :: []Sym, sym_len :: int, name :: string) :: int do
+  i = sym_len - 1
+  while i >= 0 do
+    s = syms.get(i)
+    if s.name == name do
+      return s.type_id
+    end
+    i = i - 1
+  end
+  return 0
+end
+
+defp sym_elem_lookup(syms :: []Sym, sym_len :: int, name :: string) :: int do
+  i = sym_len - 1
+  while i >= 0 do
+    s = syms.get(i)
+    if s.name == name do
+      return s.elem_type
+    end
+    i = i - 1
+  end
+  return 0
+end
+
+defp sym_contains(syms :: []Sym, sym_len :: int, name :: string) :: bool do
+  i = sym_len - 1
+  while i >= 0 do
+    s = syms.get(i)
+    if s.name == name do
+      return true
+    end
+    i = i - 1
+  end
+  return false
+end
+
+defp sym_push(syms :: []Sym, sym_len :: int, name :: string, type_id :: int, elem_t :: int) :: int do
+  s :: Sym = Sym{ name: name, type_id: type_id, elem_type: elem_t }
+  syms.set(sym_len, s)
+  return sym_len + 1
+end
+
+# ---- Function signature registry ---------------------------------------------
+
+defstruct FnSig do
+  name     :: string
+  ret_tid  :: int
+  node_idx :: int
+end
+
+defp fnsig_lookup(fns :: []FnSig, name :: string) :: int do
+  i = 0
+  while i < fns.len do
+    f = fns.get(i)
+    if f.name == name do
+      return f.ret_tid
+    end
+    i = i + 1
+  end
+  return 0
+end
+
+# ---- Struct type registry ----------------------------------------------------
+
+defstruct StructDef do
+  name     :: string
+  type_id  :: int
+  node_idx :: int
+end
+
+defp struct_lookup_tid(structs :: []StructDef, name :: string) :: int do
+  i = 0
+  while i < structs.len do
+    s = structs.get(i)
+    if s.name == name do
+      return s.type_id
+    end
+    i = i + 1
+  end
+  return 0
+end
+
+# ---- Field type registry -----------------------------------------------------
+
+defstruct FieldDef do
+  struct_tid :: int
+  name       :: string
+  type_id    :: int
+end
+
+defp field_lookup(fields :: []FieldDef, struct_tid :: int, name :: string) :: int do
+  i = 0
+  while i < fields.len do
+    f = fields.get(i)
+    if f.struct_tid == struct_tid and f.name == name do
+      return f.type_id
+    end
+    i = i + 1
+  end
+  return 0
+end
+
+# ---- Type resolution from name string ----------------------------------------
+
+defp resolve_type(name :: string, structs :: []StructDef) :: int do
+  if name == "int"    do return 1 end
+  if name == "float"  do return 2 end
+  if name == "bool"   do return 3 end
+  if name == "string" do return 4 end
+  if name == "str"    do return 4 end
+  if name == "atom"   do return 5 end
+  if name == "void"   do return 6 end
+  # Array type: starts with "[]"
+  if str_len(name) >= 2 do
+    if str_slice(name, 0, 2) == "[]" do
+      return 7
+    end
+  end
+  # User-defined struct
+  return struct_lookup_tid(structs, name)
+end
+
+# ---- Built-in function return types ------------------------------------------
+
+defp builtin_ret(name :: string) :: int do
+  if name == "str_concat"    do return 4 end  # string
+  if name == "int_to_str"    do return 4 end
+  if name == "float_to_str"  do return 4 end
+  if name == "atom_to_str"   do return 4 end
+  if name == "str_to_int"    do return 1 end  # int
+  if name == "str_len"       do return 1 end
+  if name == "str_char_at"   do return 1 end
+  if name == "str_slice"     do return 4 end  # string
+  if name == "file_read"     do return 4 end
+  if name == "print"         do return 6 end  # void
+  return 0
+end
+
+# ---- Decode fn_decl name "funcname::rettype" ---------------------------------
+
+defp fn_split_name(full_name :: string) :: string do
+  n = str_len(full_name)
+  i = 0
+  while i < n do
+    if str_char_at(full_name, i) == 58 and i + 1 < n and str_char_at(full_name, i + 1) == 58 do
+      return str_slice(full_name, 0, i)
+    end
+    i = i + 1
+  end
+  return full_name
+end
+
+defp fn_split_ret(full_name :: string, structs :: []StructDef) :: int do
+  n = str_len(full_name)
+  i = 0
+  while i < n do
+    if str_char_at(full_name, i) == 58 and i + 1 < n and str_char_at(full_name, i + 1) == 58 do
+      type_str = str_slice(full_name, i + 2, n)
+      if str_len(type_str) == 0 do return 6 end  # no return type → void
+      return resolve_type(type_str, structs)
+    end
+    i = i + 1
+  end
+  return 6  # no "::" annotation → function is void
+end
+
+# ---- Pass 0: collect struct type IDs (returns []StructDef) ------------------
+# Arrays built locally and returned so .len is correct in caller.
+
+defp collect_struct_list(pool :: []Node, ch :: []int, root :: int, first_tid :: int) :: []StructDef do
+  result    :: []StructDef = []
+  root_node = pool.get(root)
+  cs  = root_node.a
+  cl  = root_node.b
+  tid = first_tid
+  i   = 0
+  while i < cl do
+    decl_idx = ch.get(cs + i)
+    decl     = pool.get(decl_idx)
+    if decl.tag == :defstruct do
+      sd :: StructDef = StructDef{ name: decl.name, type_id: tid, node_idx: decl_idx }
+      result.push(sd)
+      tid = tid + 1
+    end
+    i = i + 1
+  end
+  return result
+end
+
+# ---- Pass 0b: collect struct fields (returns []FieldDef) --------------------
+
+defp collect_field_list(pool :: []Node, ch :: []int, structs :: []StructDef) :: []FieldDef do
+  result :: []FieldDef = []
+  si = 0
+  while si < structs.len do
+    sd             = structs.get(si)
+    defstruct_node = pool.get(sd.node_idx)
+    fcs = defstruct_node.a
+    fcl = defstruct_node.b
+    fi  = 0
+    while fi < fcl do
+      field_idx  = ch.get(fcs + fi)
+      field_node = pool.get(field_idx)
+      type_ref   = pool.get(field_node.a)
+      field_tid  = resolve_type(type_ref.name, structs)
+      fd :: FieldDef = FieldDef{ struct_tid: sd.type_id, name: field_node.name, type_id: field_tid }
+      result.push(fd)
+      fi = fi + 1
+    end
+    si = si + 1
+  end
+  return result
+end
+
+# ---- Pass 1: collect function signatures (returns []FnSig) ------------------
+
+defp collect_fn_list(pool :: []Node, ch :: []int, root :: int, structs :: []StructDef) :: []FnSig do
+  result    :: []FnSig = []
+  root_node = pool.get(root)
+  cs = root_node.a
+  cl = root_node.b
+  i  = 0
+  while i < cl do
+    decl_idx = ch.get(cs + i)
+    decl     = pool.get(decl_idx)
+    if decl.tag == :fn_decl do
+      fname   = fn_split_name(decl.name)
+      ret_tid = fn_split_ret(decl.name, structs)
+      sig :: FnSig = FnSig{ name: fname, ret_tid: ret_tid, node_idx: decl_idx }
+      result.push(sig)
+    end
+    i = i + 1
+  end
+  return result
+end
+
+# ---- Pass 2: walk expression -------------------------------------------------
+# Returns type_id of the expression. Sets types[idx] as a side effect.
+
+defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
+               syms :: []Sym, sym_len :: int,
+               fns :: []FnSig, structs :: []StructDef, fields :: []FieldDef,
+               idx :: int) :: int do
+  if idx < 0 do return 0 end
+  node = pool.get(idx)
+  tag  = node.tag
+
+  if tag == :int_lit    do types.set(idx, 1) return 1 end
+  if tag == :float_lit  do types.set(idx, 2) return 2 end
+  if tag == :string_lit do types.set(idx, 4) return 4 end
+  if tag == :atom_lit   do types.set(idx, 5) return 5 end
+  if tag == :bool_lit   do types.set(idx, 3) return 3 end
+  if tag == :array_lit  do types.set(idx, 7) return 7 end
+
+  if tag == :ident do
+    tid = sym_lookup(syms, sym_len, node.name)
+    types.set(idx, tid)
+    return tid
+  end
+
+  if tag == :at_ref do
+    # Look up the @attr type from syms (stored with "@name" key)
+    tid = sym_lookup(syms, sym_len, node.name)
+    types.set(idx, tid)
+    return tid
+  end
+
+  if tag == :binop do
+    lt = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    rt = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.b)
+    op = node.name
+    if op == "==" or op == "!=" or op == "<" or op == ">" or op == "<=" or op == ">=" do
+      types.set(idx, 3)
+      return 3
+    end
+    if op == "and" or op == "or" do
+      types.set(idx, 3)
+      return 3
+    end
+    # arithmetic: float wins
+    tid = lt
+    if rt == 2 do tid = 2 end
+    types.set(idx, tid)
+    return tid
+  end
+
+  if tag == :unary do
+    st = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    if node.name == "not" do
+      types.set(idx, 3)
+      return 3
+    end
+    types.set(idx, st)
+    return st
+  end
+
+  if tag == :call do
+    # Walk args
+    cs = node.a
+    cl = node.b
+    ai = 0
+    while ai < cl do
+      arg_idx = ch.get(cs + ai)
+      _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, arg_idx)
+      ai = ai + 1
+    end
+    # Look up return type: user fn first, then built-ins
+    ret = fnsig_lookup(fns, node.name)
+    if ret == 0 do
+      ret = builtin_ret(node.name)
+    end
+    types.set(idx, ret)
+    return ret
+  end
+
+  if tag == :method_call do
+    recv_t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    # Walk args (b=args_start in ch, c=args_len)
+    cs = node.b
+    cl = node.c
+    ai = 0
+    while ai < cl do
+      arg_idx = ch.get(cs + ai)
+      _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, arg_idx)
+      ai = ai + 1
+    end
+    mn = node.name
+    if mn == "len"   do types.set(idx, 1) return 1 end
+    if mn == "push"  do types.set(idx, 6) return 6 end
+    if mn == "set"   do types.set(idx, 6) return 6 end
+    if mn == "get" do
+      recv_node = pool.get(node.a)
+      elem_t = 0
+      if recv_node.tag == :ident do
+        elem_t = sym_elem_lookup(syms, sym_len, recv_node.name)
+      end
+      types.set(idx, elem_t)
+      return elem_t
+    end
+    types.set(idx, 0)
+    return 0
+  end
+
+  if tag == :field_get do
+    obj_t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    ft    = field_lookup(fields, obj_t, node.name)
+    types.set(idx, ft)
+    return ft
+  end
+
+  if tag == :index do
+    _t  = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    _t2 = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.b)
+    types.set(idx, 0)
+    return 0
+  end
+
+  if tag == :struct_lit do
+    tid = struct_lookup_tid(structs, node.name)
+    cs  = node.a
+    cl  = node.b
+    fi  = 0
+    while fi < cl do
+      field_node_idx = ch.get(cs + fi)
+      fnode = pool.get(field_node_idx)
+      _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, fnode.a)
+      fi = fi + 1
+    end
+    types.set(idx, tid)
+    return tid
+  end
+
+  return 0
+end
+
+# ---- Pass 2: walk statement --------------------------------------------------
+# Returns updated sym_len (new vars declared in this stmt extend the scope).
+
+defp sema_stmt(pool :: []Node, ch :: []int, types :: []int,
+               syms :: []Sym, sym_len :: int,
+               fns :: []FnSig, structs :: []StructDef, fields :: []FieldDef,
+               idx :: int) :: int do
+  if idx < 0 do return sym_len end
+  node = pool.get(idx)
+  tag  = node.tag
+
+  # Explicit var decl: name :: type = expr
+  if tag == :var_decl do
+    val_t  = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.b)
+    elem_t = 0
+    # Type annotation overrides inferred type; also extract elem type for arrays
+    if node.c >= 0 do
+      tref     = pool.get(node.c)
+      ann_t    = resolve_type(tref.name, structs)
+      if ann_t != 0 do
+        val_t = ann_t
+      end
+      if str_len(tref.name) >= 2 do
+        if str_slice(tref.name, 0, 2) == "[]" do
+          elem_name = str_slice(tref.name, 2, str_len(tref.name))
+          elem_t    = resolve_type(elem_name, structs)
+        end
+      end
+    end
+    types.set(idx, val_t)
+    sym_len = sym_push(syms, sym_len, node.name, val_t, elem_t)
+    return sym_len
+  end
+
+  # Assignment: name = expr  (implicit var decl on first use)
+  if tag == :assign do
+    val_t    = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.b)
+    lhs_node = pool.get(node.a)
+    if lhs_node.tag == :ident do
+      already = sym_contains(syms, sym_len, lhs_node.name)
+      if already == false do
+        sym_len = sym_push(syms, sym_len, lhs_node.name, val_t, 0)
+      end
+    end
+    types.set(idx, val_t)
+    return sym_len
+  end
+
+  if tag == :return_stmt do
+    _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    return sym_len
+  end
+
+  if tag == :if_stmt do
+    _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    sema_block(pool, ch, types, syms, sym_len, fns, structs, fields, node.b)
+    if node.c >= 0 do
+      sema_block(pool, ch, types, syms, sym_len, fns, structs, fields, node.c)
+    end
+    return sym_len
+  end
+
+  if tag == :while_stmt do
+    _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    sema_block(pool, ch, types, syms, sym_len, fns, structs, fields, node.b)
+    return sym_len
+  end
+
+  if tag == :for_stmt do
+    pre_mark = sym_len
+    _t       = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    sym_len  = sym_push(syms, sym_len, node.name, 0, 0)
+    sema_block(pool, ch, types, syms, sym_len, fns, structs, fields, node.b)
+    return pre_mark
+  end
+
+  if tag == :break_stmt or tag == :continue_stmt do
+    return sym_len
+  end
+
+  if tag == :at_assign do
+    _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.b)
+    return sym_len
+  end
+
+  # Expression statement (call, method_call, etc.)
+  _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, idx)
+  return sym_len
+end
+
+# ---- Pass 2: walk a block ----------------------------------------------------
+# sym_len is a value parameter — additions are local to this function.
+# Caller's sym_len is unchanged after return (scope is discarded).
+
+defp sema_block(pool :: []Node, ch :: []int, types :: []int,
+                syms :: []Sym, sym_len :: int,
+                fns :: []FnSig, structs :: []StructDef, fields :: []FieldDef,
+                block_idx :: int) do
+  if block_idx < 0 do return end
+  node = pool.get(block_idx)
+  cs   = node.a
+  cl   = node.b
+  i    = 0
+  while i < cl do
+    child   = ch.get(cs + i)
+    sym_len = sema_stmt(pool, ch, types, syms, sym_len, fns, structs, fields, child)
+    i = i + 1
+  end
+end
+
+# ---- Pass 2: walk a function declaration ------------------------------------
+
+defp sema_fn(pool :: []Node, ch :: []int, types :: []int,
+             syms :: []Sym,
+             fns :: []FnSig, structs :: []StructDef, fields :: []FieldDef,
+             fn_idx :: int, attr_sym_len :: int) do
+  fn_node      = pool.get(fn_idx)
+  params_start = fn_node.a  # index into ch
+  params_count = fn_node.b
+  body         = fn_node.c
+  # Start with @attr scope so @attrs are visible inside functions
+  sym_len = attr_sym_len
+  i       = 0
+  while i < params_count do
+    param_idx  = ch.get(params_start + i)
+    param_node = pool.get(param_idx)
+    type_ref   = pool.get(param_node.a)
+    param_tid  = resolve_type(type_ref.name, structs)
+    param_et   = 0
+    if str_len(type_ref.name) >= 2 do
+      if str_slice(type_ref.name, 0, 2) == "[]" do
+        elem_name = str_slice(type_ref.name, 2, str_len(type_ref.name))
+        param_et  = resolve_type(elem_name, structs)
+      end
+    end
+    sym_len    = sym_push(syms, sym_len, param_node.name, param_tid, param_et)
+    i = i + 1
+  end
+  sema_block(pool, ch, types, syms, sym_len, fns, structs, fields, body)
+end
+
+# ---- Main sema entry point ---------------------------------------------------
+
+defp sema_all(pool :: []Node, ch :: []int, root :: int,
+              types :: []int, syms :: []Sym,
+              fns :: []FnSig, structs :: []StructDef, fields :: []FieldDef) do
+  root_node = pool.get(root)
+  cs = root_node.a
+  cl = root_node.b
+  # Pass 0: pre-populate @attr types into syms so they're visible inside functions.
+  attr_sym_len = 0
+  i = 0
+  while i < cl do
+    decl_idx = ch.get(cs + i)
+    decl     = pool.get(decl_idx)
+    if decl.tag == :at_decl do
+      init_idx = decl.a
+      init_t   = sema_expr(pool, ch, types, syms, attr_sym_len, fns, structs, fields, init_idx)
+      attr_sym_len = sym_push(syms, attr_sym_len, decl.name, init_t, 0)
+    end
+    i = i + 1
+  end
+  # Pass 1: type-check all functions, starting with the pre-populated attrs in syms.
+  i = 0
+  while i < cl do
+    decl_idx = ch.get(cs + i)
+    decl     = pool.get(decl_idx)
+    if decl.tag == :fn_decl do
+      sema_fn(pool, ch, types, syms, fns, structs, fields, decl_idx, attr_sym_len)
+    end
+    i = i + 1
+  end
+end
+
+defp type_name(tid :: int) :: string do
+  if tid == 0 do return "unknown" end
+  if tid == 1 do return "int" end
+  if tid == 2 do return "float" end
+  if tid == 3 do return "bool" end
+  if tid == 4 do return "string" end
+  if tid == 5 do return "atom" end
+  if tid == 6 do return "void" end
+  if tid == 7 do return "array" end
+  return str_concat("struct#", int_to_str(tid))
+end

@@ -1,0 +1,644 @@
+# Bootstrap Chasm compiler — C99 code emitter.
+#
+# Walks the typed AST (with types[] filled by sema) and prints C99 to stdout.
+# Uses a VarElem side-table to track array element types per variable.
+
+# ---- VarElem: per-variable array element type --------------------------------
+
+defstruct VarElem do
+  name     :: string
+  elem_tid :: int
+end
+
+defp make_ve_pool(cap :: int) :: []VarElem do
+  pool  :: []VarElem = []
+  empty :: VarElem   = VarElem{ name: "", elem_tid: 0 }
+  i = 0
+  while i < cap do
+    pool.push(empty)
+    i = i + 1
+  end
+  return pool
+end
+
+defp ve_lookup(var_elems :: []VarElem, ve_len :: int, name :: string) :: int do
+  i = ve_len - 1
+  while i >= 0 do
+    ve = var_elems.get(i)
+    if ve.name == name do return ve.elem_tid end
+    i = i - 1
+  end
+  return -1
+end
+
+defp ve_declared(var_elems :: []VarElem, ve_len :: int, name :: string) :: bool do
+  i = ve_len - 1
+  while i >= 0 do
+    ve = var_elems.get(i)
+    if ve.name == name do return true end
+    i = i - 1
+  end
+  return false
+end
+
+defp ve_push(var_elems :: []VarElem, ve_len :: int, name :: string, elem_tid :: int) :: int do
+  ve :: VarElem = VarElem{ name: name, elem_tid: elem_tid }
+  var_elems.set(ve_len, ve)
+  return ve_len + 1
+end
+
+# ---- C type helpers ----------------------------------------------------------
+
+defp c_type(tid :: int, structs :: []StructDef) :: string do
+  if tid == 0 do return "int64_t" end
+  if tid == 1 do return "int64_t" end
+  if tid == 2 do return "double" end
+  if tid == 3 do return "bool" end
+  if tid == 4 do return "const char*" end
+  if tid == 5 do return "const char*" end
+  if tid == 6 do return "void" end
+  if tid == 7 do return "ChasmArray" end
+  i = 0
+  while i < structs.len do
+    s = structs.get(i)
+    if s.type_id == tid do return s.name end
+    i = i + 1
+  end
+  return "int64_t"
+end
+
+defp struct_name_by_tid(structs :: []StructDef, tid :: int) :: string do
+  i = 0
+  while i < structs.len do
+    s = structs.get(i)
+    if s.type_id == tid do return s.name end
+    i = i + 1
+  end
+  return ""
+end
+
+defp elem_type_of_ann(ann_name :: string, structs :: []StructDef) :: int do
+  n = str_len(ann_name)
+  if n < 3 do return 0 end
+  if str_slice(ann_name, 0, 2) != "[]" do return 0 end
+  elem_name = str_slice(ann_name, 2, n)
+  return resolve_type(elem_name, structs)
+end
+
+defp array_elem_suffix(structs :: []StructDef, elem_tid :: int) :: string do
+  # Only user-defined struct types get a typed suffix (_TypeName).
+  # Primitive types (int, float, bool, string, atom) use the generic
+  # chasm_array_push/get/set which operate on int64_t — no suffix.
+  if elem_tid == 0 do return "" end
+  sn = struct_name_by_tid(structs, elem_tid)
+  if str_len(sn) > 0 do return str_concat("_", sn) end
+  return ""
+end
+
+# ---- Indentation helper ------------------------------------------------------
+
+defp indent_str(depth :: int) :: string do
+  s = ""
+  i = 0
+  while i < depth do
+    s = str_concat(s, "  ")
+    i = i + 1
+  end
+  return s
+end
+
+# Strip one level of outer parens from a condition string.
+# binop always returns "(lhs op rhs)" — when used directly as an if/while
+# condition the surrounding if(...) would double-wrap. Strip first.
+defp unwrap_cond(s :: string) :: string do
+  n = str_len(s)
+  if n >= 2 do
+    if str_char_at(s, 0) == 40 and str_char_at(s, n - 1) == 41 do
+      return str_slice(s, 1, n - 1)
+    end
+  end
+  return s
+end
+
+# ---- Emit expression (returns C expression string) --------------------------
+# Forward declared via mutual reference; emit_stmt calls emit_block_body
+# which calls emit_stmt; emit_expr is self-recursive.
+
+defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
+               structs :: []StructDef, fns :: []FnSig, fields :: []FieldDef,
+               var_elems :: []VarElem, ve_len :: int,
+               idx :: int) :: string do
+  if idx < 0 do return "0" end
+  node = pool.get(idx)
+  tag  = node.tag
+
+  if tag == :int_lit    do return node.name end
+  if tag == :float_lit  do return node.name end
+  if tag == :string_lit do return node.name end
+  if tag == :bool_lit   do return node.name end
+
+  if tag == :atom_lit do
+    n = str_len(node.name)
+    atom_inner = str_slice(node.name, 1, n)
+    return str_concat("\042", str_concat(atom_inner, "\042"))
+  end
+
+  if tag == :ident do return node.name end
+
+  if tag == :at_ref do
+    # Strip leading @ to get the global variable name: @x → g_x
+    attr_name = str_slice(node.name, 1, str_len(node.name))
+    return str_concat("g_", attr_name)
+  end
+
+  if tag == :array_lit do
+    # Allocate with the right capacity. Elements cannot be inlined into an
+    # expression without an IR/temp layer, so non-empty literals are not
+    # supported by the bootstrap codegen — use array_new + .push() instead.
+    cap_s = int_to_str(node.b)
+    return str_concat("chasm_array_new(ctx, ", str_concat(cap_s, ")"))
+  end
+
+  if tag == :binop do
+    lc  = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    rc  = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.b)
+    op  = node.name
+    lt  = types.get(node.a)
+    cop = op
+    if op == "and" do cop = "&&" end
+    if op == "or"  do cop = "||" end
+    # String/atom equality uses strcmp
+    if op == "==" or op == "!=" do
+      if lt == 4 or lt == 5 do
+        cmp_op = "=="
+        if op == "!=" do cmp_op = "!=" end
+        return str_concat("(strcmp(", str_concat(lc, str_concat(", ", str_concat(rc, str_concat(") ", str_concat(cmp_op, " 0)"))))))
+      end
+    end
+    return str_concat("(", str_concat(lc, str_concat(" ", str_concat(cop, str_concat(" ", str_concat(rc, ")"))))))
+  end
+
+  if tag == :unary do
+    sc = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    if node.name == "not" do return str_concat("!(", str_concat(sc, ")")) end
+    return str_concat("-(", str_concat(sc, ")"))
+  end
+
+  if tag == :call do
+    cs      = node.a
+    cl      = node.b
+    fn_name = node.name
+    # Build args string
+    args_str = ""
+    ai = 0
+    while ai < cl do
+      arg_idx = ch.get(cs + ai)
+      ac = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, arg_idx)
+      if ai > 0 do args_str = str_concat(args_str, ", ") end
+      args_str = str_concat(args_str, ac)
+      ai = ai + 1
+    end
+    # Dispatch print by argument type
+    if fn_name == "print" do
+      if cl == 1 do
+        arg0_idx = ch.get(cs)
+        arg0_tid = types.get(arg0_idx)
+        if arg0_tid == 2 do return str_concat("chasm_print_f(ctx, ", str_concat(args_str, ")")) end
+        if arg0_tid == 3 do return str_concat("chasm_print_b(ctx, ", str_concat(args_str, ")")) end
+        if arg0_tid == 4 or arg0_tid == 5 do
+          return str_concat("chasm_print_s(ctx, ", str_concat(args_str, ")"))
+        end
+        return str_concat("chasm_print(ctx, ", str_concat(args_str, ")"))
+      end
+    end
+    # Default: chasm_name(ctx, args)
+    if cl == 0 do
+      return str_concat("chasm_", str_concat(fn_name, "(ctx)"))
+    end
+    return str_concat("chasm_", str_concat(fn_name, str_concat("(ctx, ", str_concat(args_str, ")"))))
+  end
+
+  if tag == :method_call do
+    recv_node = pool.get(node.a)
+    recv_c    = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    mn        = node.name
+    cs        = node.b
+    cl        = node.c
+
+    if mn == "len" do
+      return str_concat("(", str_concat(recv_c, ").len"))
+    end
+
+    # Determine array element suffix from var_elems
+    elem_tid = 0
+    if recv_node.tag == :ident do
+      elem_tid = ve_lookup(var_elems, ve_len, recv_node.name)
+    end
+    esuf = array_elem_suffix(structs, elem_tid)
+
+    if mn == "push" do
+      arg_idx = ch.get(cs)
+      ac = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, arg_idx)
+      return str_concat("chasm_array_push", str_concat(esuf, str_concat("(ctx, &", str_concat(recv_c, str_concat(", ", str_concat(ac, ")"))))))
+    end
+    if mn == "get" do
+      arg_idx = ch.get(cs)
+      ac = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, arg_idx)
+      return str_concat("chasm_array_get", str_concat(esuf, str_concat("(ctx, &", str_concat(recv_c, str_concat(", ", str_concat(ac, ")"))))))
+    end
+    if mn == "set" do
+      i_idx = ch.get(cs)
+      v_idx = ch.get(cs + 1)
+      ic = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, i_idx)
+      vc = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, v_idx)
+      return str_concat("chasm_array_set", str_concat(esuf, str_concat("(ctx, &", str_concat(recv_c, str_concat(", ", str_concat(ic, str_concat(", ", str_concat(vc, ")"))))))))
+    end
+    if mn == "pop" do
+      return str_concat("chasm_array_pop(ctx, &", str_concat(recv_c, ")"))
+    end
+    if mn == "clear" do
+      return str_concat("chasm_array_clear(ctx, &", str_concat(recv_c, ")"))
+    end
+    # Generic struct method fallback
+    args_str = ""
+    ai = 0
+    while ai < cl do
+      arg_idx = ch.get(cs + ai)
+      ac = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, arg_idx)
+      if ai > 0 do args_str = str_concat(args_str, ", ") end
+      args_str = str_concat(args_str, ac)
+      ai = ai + 1
+    end
+    if cl == 0 do
+      return str_concat(recv_c, str_concat(".", mn))
+    end
+    return str_concat(recv_c, str_concat(".", str_concat(mn, str_concat("(", str_concat(args_str, ")")))))
+  end
+
+  if tag == :field_get do
+    obj_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    return str_concat(obj_c, str_concat(".", node.name))
+  end
+
+  if tag == :index do
+    obj_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    idx_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.b)
+    return str_concat(obj_c, str_concat("[", str_concat(idx_c, "]")))
+  end
+
+  if tag == :struct_lit do
+    cs       = node.a
+    cl       = node.b
+    flds_c   = ""
+    fi       = 0
+    while fi < cl do
+      field_node_idx = ch.get(cs + fi)
+      fnode = pool.get(field_node_idx)
+      val_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, fnode.a)
+      if fi > 0 do flds_c = str_concat(flds_c, ", ") end
+      flds_c = str_concat(flds_c, str_concat(".", str_concat(fnode.name, str_concat(" = ", val_c))))
+      fi = fi + 1
+    end
+    return str_concat("(", str_concat(node.name, str_concat("){ ", str_concat(flds_c, " }"))))
+  end
+
+  return "0"
+end
+
+# ---- is_stmt_tag: true for top-level statement node tags -------------------
+# The bootstrap parser's block children include sub-expression nodes (field_init,
+# ident, etc.) due to sharing the ch[] pool with expression sub-children.
+# We skip those — only true statement nodes get emitted.
+
+defp is_stmt_tag(tag :: atom) :: bool do
+  return tag == :var_decl or tag == :assign or tag == :return_stmt or
+         tag == :if_stmt   or tag == :while_stmt or tag == :for_stmt  or
+         tag == :break_stmt or tag == :continue_stmt or
+         tag == :call or tag == :method_call or tag == :at_assign
+end
+
+# ---- Emit block body (forward reference: emit_stmt defined below) -----------
+
+defp emit_block_body(pool :: []Node, ch :: []int, types :: []int,
+                     structs :: []StructDef, fns :: []FnSig, fields :: []FieldDef,
+                     var_elems :: []VarElem, ve_len :: int,
+                     depth :: int, block_idx :: int) :: int do
+  if block_idx < 0 do return ve_len end
+  node = pool.get(block_idx)
+  cs   = node.a
+  cl   = node.b
+  i    = 0
+  while i < cl do
+    child  = ch.get(cs + i)
+    cn     = pool.get(child)
+    if is_stmt_tag(cn.tag) do
+      ve_len = emit_stmt(pool, ch, types, structs, fns, fields, var_elems, ve_len, depth, child)
+    end
+    i = i + 1
+  end
+  return ve_len
+end
+
+# ---- Emit statement (returns updated ve_len) ---------------------------------
+
+defp emit_stmt(pool :: []Node, ch :: []int, types :: []int,
+               structs :: []StructDef, fns :: []FnSig, fields :: []FieldDef,
+               var_elems :: []VarElem, ve_len :: int,
+               depth :: int, idx :: int) :: int do
+  if idx < 0 do return ve_len end
+  node = pool.get(idx)
+  tag  = node.tag
+  ind  = indent_str(depth)
+
+  if tag == :var_decl do
+    val_c  = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.b)
+    val_t  = types.get(idx)
+    type_c = c_type(val_t, structs)
+    # Track array element type from annotation; register name as declared either way.
+    if node.c >= 0 do
+      tref  = pool.get(node.c)
+      ann_n = tref.name
+      if str_len(ann_n) >= 2 do
+        if str_slice(ann_n, 0, 2) == "[]" do
+          et     = elem_type_of_ann(ann_n, structs)
+          ve_len = ve_push(var_elems, ve_len, node.name, et)
+        end
+      end
+    end
+    if ve_declared(var_elems, ve_len, node.name) == false do
+      ve_len = ve_push(var_elems, ve_len, node.name, 0)
+    end
+    print(str_concat(ind, str_concat(type_c, str_concat(" ", str_concat(node.name, str_concat(" = ", str_concat(val_c, ";")))))))
+    return ve_len
+  end
+
+  if tag == :assign do
+    lhs_node = pool.get(node.a)
+    val_c    = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.b)
+    if lhs_node.tag == :ident do
+      nm = lhs_node.name
+      if ve_declared(var_elems, ve_len, nm) do
+        # Reassignment to an already-declared variable.
+        print(str_concat(ind, str_concat(nm, str_concat(" = ", str_concat(val_c, ";")))))
+      else
+        # First use: emit a typed declaration and register the name.
+        # types[idx] holds the assign-node type (set by sema); types[node.a] (ident) is 0.
+        val_t  = types.get(idx)
+        type_c = c_type(val_t, structs)
+        ve_len = ve_push(var_elems, ve_len, nm, 0)
+        print(str_concat(ind, str_concat(type_c, str_concat(" ", str_concat(nm, str_concat(" = ", str_concat(val_c, ";")))))))
+      end
+    end
+    return ve_len
+  end
+
+  if tag == :return_stmt do
+    if node.a < 0 do
+      print(str_concat(ind, "return;"))
+    else
+      val_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+      print(str_concat(ind, str_concat("return ", str_concat(val_c, ";"))))
+    end
+    return ve_len
+  end
+
+  if tag == :if_stmt do
+    cond_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    print(str_concat(ind, str_concat("if (", str_concat(unwrap_cond(cond_c), ") {"))))
+    _ve = emit_block_body(pool, ch, types, structs, fns, fields, var_elems, ve_len, depth + 1, node.b)
+    if node.c >= 0 do
+      print(str_concat(ind, "} else {"))
+      _ve = emit_block_body(pool, ch, types, structs, fns, fields, var_elems, ve_len, depth + 1, node.c)
+    end
+    print(str_concat(ind, "}"))
+    return ve_len
+  end
+
+  if tag == :while_stmt do
+    cond_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    print(str_concat(ind, str_concat("while (", str_concat(unwrap_cond(cond_c), ") {"))))
+    _ve = emit_block_body(pool, ch, types, structs, fns, fields, var_elems, ve_len, depth + 1, node.b)
+    print(str_concat(ind, "}"))
+    return ve_len
+  end
+
+  if tag == :for_stmt do
+    iter_c    = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    var_n     = node.name
+    iter_node = pool.get(node.a)
+    elem_tid  = 0
+    if iter_node.tag == :ident do
+      elem_tid = ve_lookup(var_elems, ve_len, iter_node.name)
+    end
+    elem_c   = c_type(elem_tid, structs)
+    esuf     = array_elem_suffix(structs, elem_tid)
+    print(str_concat(ind, "{"))
+    ind1 = str_concat(ind, "  ")
+    print(str_concat(ind1, str_concat("int64_t _fi = 0, _fl = (", str_concat(iter_c, ").len;"))))
+    print(str_concat(ind1, "while (_fi < _fl) {"))
+    ind2 = str_concat(ind1, "  ")
+    print(str_concat(ind2, str_concat(elem_c, str_concat(" ", str_concat(var_n, str_concat(" = chasm_array_get", str_concat(esuf, str_concat("(ctx, &", str_concat(iter_c, ", _fi);")))))))))
+    _ve = emit_block_body(pool, ch, types, structs, fns, fields, var_elems, ve_len, depth + 2, node.b)
+    print(str_concat(ind2, "_fi++;"))
+    print(str_concat(ind1, "}"))
+    print(str_concat(ind, "}"))
+    return ve_len
+  end
+
+  if tag == :break_stmt    do print(str_concat(ind, "break;"))    return ve_len end
+  if tag == :continue_stmt do print(str_concat(ind, "continue;")) return ve_len end
+
+  if tag == :at_assign do
+    # @name = expr → g_name = expr;
+    attr_name = str_slice(node.name, 1, str_len(node.name))
+    val_c     = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.b)
+    print(str_concat(ind, str_concat("g_", str_concat(attr_name, str_concat(" = ", str_concat(val_c, ";"))))))
+    return ve_len
+  end
+
+  # Expression statement
+  ec = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, idx)
+  print(str_concat(ind, str_concat(ec, ";")))
+  return ve_len
+end
+
+# ---- Emit typed array helpers for one struct ---------------------------------
+
+defp emit_array_helpers(sn :: string) do
+  print(str_concat("static inline ", str_concat(sn, str_concat(" chasm_array_get_", str_concat(sn, "(ChasmCtx *ctx, ChasmArray *a, int64_t i) {")))))
+  print(str_concat("    static const ", str_concat(sn, " zero = {0};")))
+  print("    if (i < 0 || i >= a->len) return zero;")
+  print(str_concat("    return ((", str_concat(sn, "*)a->data)[i];")))
+  print("}")
+  print(str_concat("static inline void chasm_array_set_", str_concat(sn, str_concat("(ChasmCtx *ctx, ChasmArray *a, int64_t i, ", str_concat(sn, " v) {")))))
+  print(str_concat("    if (i >= 0 && i < a->len) ((", str_concat(sn, "*)a->data)[i] = v;")))
+  print("}")
+  print(str_concat("static inline void chasm_array_push_", str_concat(sn, str_concat("(ChasmCtx *ctx, ChasmArray *a, ", str_concat(sn, " v) {")))))
+  print(str_concat("    if (a->len >= a->cap) { a->cap = a->cap * 2 + 8; a->data = realloc(a->data, (size_t)a->cap * sizeof(", str_concat(sn, ")); }")))
+  print(str_concat("    if (a->data) ((", str_concat(sn, "*)a->data)[a->len++] = v;")))
+  print("}")
+  print("")
+end
+
+# ---- Emit struct typedefs + typed array helpers ------------------------------
+
+defp emit_struct_defs(structs :: []StructDef, fields :: []FieldDef) do
+  if structs.len == 0 do return end
+  print("/* Struct types */")
+  si = 0
+  while si < structs.len do
+    sd = structs.get(si)
+    print("typedef struct {")
+    fi = 0
+    while fi < fields.len do
+      fd = fields.get(fi)
+      if fd.struct_tid == sd.type_id do
+        print(str_concat("    ", str_concat(c_type(fd.type_id, structs), str_concat(" ", str_concat(fd.name, ";")))))
+      end
+      fi = fi + 1
+    end
+    print(str_concat("} ", str_concat(sd.name, ";")))
+    print("")
+    si = si + 1
+  end
+  print("/* Typed array helpers */")
+  si = 0
+  while si < structs.len do
+    sd = structs.get(si)
+    emit_array_helpers(sd.name)
+    si = si + 1
+  end
+end
+
+# ---- Emit forward declarations -----------------------------------------------
+
+defp emit_fwd_decls(pool :: []Node, ch :: []int, structs :: []StructDef, fns :: []FnSig) do
+  if fns.len == 0 do return end
+  print("/* Forward declarations */")
+  i = 0
+  while i < fns.len do
+    f        = fns.get(i)
+    ret_c    = c_type(f.ret_tid, structs)
+    fn_node  = pool.get(f.node_idx)
+    ps       = fn_node.a
+    pc       = fn_node.b
+    params_s = ""
+    j = 0
+    while j < pc do
+      param_idx  = ch.get(ps + j)
+      param_node = pool.get(param_idx)
+      type_ref   = pool.get(param_node.a)
+      param_tid  = resolve_type(type_ref.name, structs)
+      params_s   = str_concat(params_s, str_concat(", ", c_type(param_tid, structs)))
+      j = j + 1
+    end
+    print(str_concat(ret_c, str_concat(" chasm_", str_concat(f.name, str_concat("(ChasmCtx *ctx", str_concat(params_s, ");"))))))
+    i = i + 1
+  end
+  print("")
+end
+
+# ---- Emit a single function definition ---------------------------------------
+
+defp emit_fn(pool :: []Node, ch :: []int, types :: []int,
+             structs :: []StructDef, fns :: []FnSig, fields :: []FieldDef,
+             fn_idx :: int) do
+  fn_node      = pool.get(fn_idx)
+  params_start = fn_node.a
+  params_count = fn_node.b
+  body         = fn_node.c
+  fn_name      = fn_split_name(fn_node.name)
+  ret_tid      = fn_split_ret(fn_node.name, structs)
+  ret_c        = c_type(ret_tid, structs)
+  # Build parameter list and populate var_elems for params
+  params_str = ""
+  var_elems  :: []VarElem = make_ve_pool(1024)
+  ve_len     = 0
+  i = 0
+  while i < params_count do
+    param_idx  = ch.get(params_start + i)
+    param_node = pool.get(param_idx)
+    type_ref   = pool.get(param_node.a)
+    param_tid  = resolve_type(type_ref.name, structs)
+    param_c    = c_type(param_tid, structs)
+    params_str = str_concat(params_str, str_concat(", ", str_concat(param_c, str_concat(" ", param_node.name))))
+    # Track array elem type for this param; register all params as declared.
+    ann_n = type_ref.name
+    if str_len(ann_n) >= 2 do
+      if str_slice(ann_n, 0, 2) == "[]" do
+        et     = elem_type_of_ann(ann_n, structs)
+        ve_len = ve_push(var_elems, ve_len, param_node.name, et)
+      end
+    end
+    if ve_declared(var_elems, ve_len, param_node.name) == false do
+      ve_len = ve_push(var_elems, ve_len, param_node.name, 0)
+    end
+    i = i + 1
+  end
+  print(str_concat(ret_c, str_concat(" chasm_", str_concat(fn_name, str_concat("(ChasmCtx *ctx", str_concat(params_str, ") {"))))))
+  _ve = emit_block_body(pool, ch, types, structs, fns, fields, var_elems, ve_len, 1, body)
+  print("}")
+  print("")
+end
+
+# ---- Top-level codegen entry point ------------------------------------------
+
+defp codegen(pool :: []Node, ch :: []int, root :: int,
+             types :: []int, structs :: []StructDef,
+             fields :: []FieldDef, fns :: []FnSig) do
+  print("/* Generated by Chasm bootstrap compiler - do not edit. */")
+  print("#include \042chasm_rt.h\042")
+  print("")
+  emit_struct_defs(structs, fields)
+  emit_fwd_decls(pool, ch, structs, fns)
+  root_node = pool.get(root)
+  cs = root_node.a
+  cl = root_node.b
+  # Emit module-level @attr globals
+  has_attrs = false
+  i = 0
+  while i < cl do
+    decl_idx = ch.get(cs + i)
+    decl     = pool.get(decl_idx)
+    if decl.tag == :at_decl do
+      if has_attrs == false do
+        print("/* Module attributes */")
+        has_attrs = true
+      end
+      attr_name = str_slice(decl.name, 1, str_len(decl.name))
+      init_t    = types.get(decl.a)
+      type_c    = c_type(init_t, structs)
+      print(str_concat("static ", str_concat(type_c, str_concat(" g_", str_concat(attr_name, ";")))))
+    end
+    i = i + 1
+  end
+  if has_attrs do
+    print("")
+    print("void chasm_module_init(ChasmCtx *ctx) {")
+    var_elems :: []VarElem = make_ve_pool(64)
+    ve_len = 0
+    i = 0
+    while i < cl do
+      decl_idx = ch.get(cs + i)
+      decl     = pool.get(decl_idx)
+      if decl.tag == :at_decl do
+        attr_name = str_slice(decl.name, 1, str_len(decl.name))
+        val_c     = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, decl.a)
+        print(str_concat("  g_", str_concat(attr_name, str_concat(" = ", str_concat(val_c, ";")))))
+      end
+      i = i + 1
+    end
+    print("}")
+    print("")
+  end
+  # Walk root and emit all function declarations
+  i = 0
+  while i < cl do
+    decl_idx = ch.get(cs + i)
+    decl     = pool.get(decl_idx)
+    if decl.tag == :fn_decl do
+      emit_fn(pool, ch, types, structs, fns, fields, decl_idx)
+    end
+    i = i + 1
+  end
+end

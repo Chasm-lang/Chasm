@@ -32,6 +32,9 @@ static inline void chasm_clear_frame(ChasmCtx *ctx) {
 
 /* Promote a scalar value to a longer-lived arena (primitive: no-op copy). */
 #define chasm_promote_scalar(val) (val)
+/* Lifetime promotion builtins — compile-time lifetime checks, runtime no-op. */
+#define chasm_copy_to_script(ctx, val) (val)
+#define chasm_persist_copy(ctx, val, ...) (val)
 
 /* ------------------------------------------------------------------ */
 /* Chasm standard library                                             */
