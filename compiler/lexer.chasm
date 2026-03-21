@@ -48,6 +48,10 @@ defp keyword_kind(word :: string) :: atom do
   if word == "false"          do return :false_kw end
   if word == "extern"         do return :extern_kw end
   if word == "import"         do return :import_kw end
+  if word == "enum"           do return :enum_kw end
+  if word == "match"          do return :match_kw end
+  if word == "case"           do return :case_kw end
+  if word == "when"           do return :when_kw end
   return :ident
 end
 
@@ -224,6 +228,19 @@ defp lex(src :: string) :: []Token do
       else
         tokens.push(Token{ kind: :lt,    lexeme: str_slice(src, start, i), line: start_line, col: start_col })
         last_kind = :lt
+      end
+      continue
+    end
+    if ch == 124 do
+      # | — check for |>
+      if i < n and str_char_at(src, i) == 62 do
+        i   = i + 1
+        col = col + 1
+        tokens.push(Token{ kind: :pipe, lexeme: str_slice(src, start, i), line: start_line, col: start_col })
+        last_kind = :pipe
+      else
+        tokens.push(Token{ kind: :error, lexeme: str_slice(src, start, i), line: start_line, col: start_col })
+        last_kind = :error
       end
       continue
     end

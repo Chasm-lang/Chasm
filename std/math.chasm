@@ -1,1 +1,67 @@
--- TODO: standard library
+# std/math.chasm — Math utilities for Chasm.
+# Import with: import "math"
+#
+# Most math functions (abs, sqrt, sin, cos, tan, atan2, floor, ceil, round,
+# min, max, clamp, lerp, wrap, move_toward, smooth_step, vec2_*, ease_*, etc.)
+# are built-in and available without any import. This module provides:
+#   - Constants (@PI, @TAU, @E)
+#   - extern fn declarations for type-checking
+#   - Additional utilities not in the runtime (clamp_int, inv_lerp, remap)
+
+# ---- Constants -------------------------------------------------------------
+@PI  :: script = 3.14159265358979323846
+@TAU :: script = 6.28318530717958647692
+@E   :: script = 2.71828182845904523536
+
+# ---- C-backed (extern declarations for type checking) ----------------------
+extern fn sin(v: float) -> float
+extern fn cos(v: float) -> float
+extern fn tan(v: float) -> float
+extern fn atan2(y: float, x: float) -> float
+extern fn sqrt(v: float) -> float
+extern fn pow(b: float, e: float) -> float
+extern fn abs(v: float) -> float
+extern fn floor(v: float) -> float
+extern fn ceil(v: float) -> float
+extern fn round(v: float) -> float
+extern fn min(a: float, b: float) -> float
+extern fn max(a: float, b: float) -> float
+extern fn clamp(v: float, lo: float, hi: float) -> float
+extern fn lerp(a: float, b: float, t: float) -> float
+extern fn deg_to_rad(d: float) -> float
+extern fn rad_to_deg(r: float) -> float
+extern fn rand() -> float
+extern fn rand_range(lo: float, hi: float) -> float
+extern fn rand_int(lo: int, hi: int) -> int
+
+# ---- Pure Chasm: integer variants not in runtime ---------------------------
+
+defp clamp_int(v :: int, lo :: int, hi :: int) :: int do
+  if v < lo do return lo end
+  if v > hi do return hi end
+  return v
+end
+
+defp min_int(a :: int, b :: int) :: int do
+  if a < b do return a end
+  return b
+end
+
+defp max_int(a :: int, b :: int) :: int do
+  if a > b do return a end
+  return b
+end
+
+# ---- Pure Chasm: higher-level utilities ------------------------------------
+
+# Inverse lerp: returns the t value such that lerp(a, b, t) == v.
+defp inv_lerp(a :: float, b :: float, v :: float) :: float do
+  if b == a do return 0.0 end
+  return (v - a) / (b - a)
+end
+
+# Remap a value from one range to another.
+defp remap(v :: float, a1 :: float, b1 :: float, a2 :: float, b2 :: float) :: float do
+  t = inv_lerp(a1, b1, v)
+  return lerp(a2, b2, t)
+end

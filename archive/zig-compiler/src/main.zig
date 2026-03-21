@@ -1,16 +1,16 @@
-const std      = @import("std");
-const builtin  = @import("builtin");
+const std = @import("std");
+const builtin = @import("builtin");
 const ArenaTriple = @import("runtime").ArenaTriple;
-const Lexer    = @import("lexer").Lexer;
-const Parser   = @import("parser").Parser;
-const AstPool  = @import("ast").AstPool;
+const Lexer = @import("lexer").Lexer;
+const Parser = @import("parser").Parser;
+const AstPool = @import("ast").AstPool;
 const DiagList = @import("diag").DiagList;
-const Sema     = @import("sema").Sema;
-const Lowerer  = @import("lower").Lowerer;
-const codegen      = @import("codegen");
+const Sema = @import("sema").Sema;
+const Lowerer = @import("lower").Lowerer;
+const codegen = @import("codegen");
 const codegen_wasm = @import("codegen_wasm");
-const reload   = @import("reload");
-const ir_mod   = @import("ir");
+const reload = @import("reload");
+const ir_mod = @import("ir");
 
 const raylib_prelude = @import("prelude").raylib_prelude;
 
@@ -55,7 +55,7 @@ pub fn main() !void {
         defer link_libs.deinit(backing);
         var file_path_run: []const u8 = "";
         var engine_raylib = false;
-        var watch_mode    = false;
+        var watch_mode = false;
         var j: usize = 2;
         while (j < args.len) : (j += 1) {
             if (std.mem.eql(u8, args[j], "--link") and j + 1 < args.len) {
@@ -263,7 +263,7 @@ fn compileFileOpts(path: []const u8, frame_alloc: std.mem.Allocator, verbose: bo
     else
         file_src;
 
-    var pool  = AstPool.init(frame_alloc);
+    var pool = AstPool.init(frame_alloc);
     var diags = DiagList.initWithSource(frame_alloc, src);
 
     var lexer = Lexer.init(src);
@@ -305,8 +305,7 @@ fn compileFileOpts(path: []const u8, frame_alloc: std.mem.Allocator, verbose: bo
     if (verbose) {
         const stdout = std.fs.File.stdout().deprecatedWriter();
         const s = sema.stats;
-        try stdout.print("{s}: {d} decls, {d} symbols — frame:{d} script:{d} persistent:{d}\n",
-            .{ path, top_level.len, s.symbols_resolved, s.frame_vars, s.script_vars, s.persistent_vars });
+        try stdout.print("{s}: {d} decls, {d} symbols — frame:{d} script:{d} persistent:{d}\n", .{ path, top_level.len, s.symbols_resolved, s.frame_vars, s.script_vars, s.persistent_vars });
     }
 
     return ir_module;
@@ -463,7 +462,7 @@ fn emitWasmHost(module: ir_mod.IrModule, wasm_name: []const u8, writer: anytype)
         \\  const {{ instance }} = await WebAssembly.instantiateStreaming(fetch('{s}'), {{ env }});
         \\  const ex = instance.exports;
         \\
-        , .{wasm_name});
+    , .{wasm_name});
 
     if (has_on_init) {
         try writer.print("  if (ex.on_init) ex.on_init();\n", .{});
@@ -475,7 +474,7 @@ fn emitWasmHost(module: ir_mod.IrModule, wasm_name: []const u8, writer: anytype)
         \\    const dt = prev ? (ts - prev) / 1000 : 0.016;
         \\    prev = ts;
         \\
-        , .{});
+    , .{});
 
     if (has_on_tick) try writer.print("    if (ex.on_tick) ex.on_tick(dt);\n", .{});
     if (has_on_draw) try writer.print("    if (ex.on_draw) ex.on_draw();\n", .{});
@@ -489,7 +488,7 @@ fn emitWasmHost(module: ir_mod.IrModule, wasm_name: []const u8, writer: anytype)
         \\</body>
         \\</html>
         \\
-        , .{});
+    , .{});
 }
 
 /// Write C output and runtime header for a compiled module.
@@ -521,7 +520,7 @@ fn writeOutputOpts(path: []const u8, ir_module: ir_mod.IrModule, engine_raylib: 
     }
 
     // Write runtime header alongside source if not already present.
-    const dir     = std.fs.path.dirname(out_path) orelse ".";
+    const dir = std.fs.path.dirname(out_path) orelse ".";
     const rt_path = try std.fmt.allocPrint(frame_alloc, "{s}/chasm_rt.h", .{dir});
     const rt_file = std.fs.cwd().createFile(rt_path, .{ .exclusive = true }) catch |err| switch (err) {
         error.PathAlreadyExists => null,
@@ -543,18 +542,18 @@ fn writeOutputOpts(path: []const u8, ir_module: ir_mod.IrModule, engine_raylib: 
 /// `output_path` is the `-o` target; `is_dylib` adds `-dynamiclib`.
 fn buildCcArgs(
     output_path: []const u8,
-    script_c:    []const u8,
-    harness_c:   ?[]const u8,   // null for dylib builds
-    tmp_dir:     []const u8,
-    raylib_dir:  []const u8,
-    is_dylib:    bool,
-    list:        *std.ArrayListUnmanaged([]const u8),
-    backing:     std.mem.Allocator,
+    script_c: []const u8,
+    harness_c: ?[]const u8, // null for dylib builds
+    tmp_dir: []const u8,
+    raylib_dir: []const u8,
+    is_dylib: bool,
+    list: *std.ArrayListUnmanaged([]const u8),
+    backing: std.mem.Allocator,
     frame_alloc: std.mem.Allocator,
 ) !void {
     try list.appendSlice(backing, &.{ "cc", "-o", output_path });
     if (is_dylib) {
-        try list.appendSlice(backing, &.{ "-dynamiclib" });
+        try list.appendSlice(backing, &.{"-dynamiclib"});
         if (builtin.os.tag == .macos) {
             try list.appendSlice(backing, &.{ "-undefined", "dynamic_lookup" });
         }
@@ -661,17 +660,15 @@ fn runRaylibHotReload(path: []const u8, link_libs: []const []const u8, backing: 
     };
 
     // Build cc reload command template (output path has %lld for reload index).
-    const raylib_inc  = try std.fmt.allocPrint(frame_alloc, "{s}/include", .{raylib_dir});
-    const abs_rl_inc  = if (std.fs.path.isAbsolute(raylib_inc)) raylib_inc
-        else try std.fs.cwd().realpathAlloc(frame_alloc, raylib_inc);
+    const raylib_inc = try std.fmt.allocPrint(frame_alloc, "{s}/include", .{raylib_dir});
+    const abs_rl_inc = if (std.fs.path.isAbsolute(raylib_inc)) raylib_inc else try std.fs.cwd().realpathAlloc(frame_alloc, raylib_inc);
     var cc_reload_cmd = std.ArrayListUnmanaged(u8){};
     defer cc_reload_cmd.deinit(frame_alloc);
     try cc_reload_cmd.appendSlice(frame_alloc, "cc -dynamiclib");
     if (builtin.os.tag == .macos) {
         try cc_reload_cmd.appendSlice(frame_alloc, " -undefined dynamic_lookup");
     }
-    try cc_reload_cmd.writer(frame_alloc).print(" -o {s}/script_%lld.dylib {s} -I {s} -I {s}",
-        .{ tmp_dir, abs_c_out, tmp_dir, abs_rl_inc });
+    try cc_reload_cmd.writer(frame_alloc).print(" -o {s}/script_%lld.dylib {s} -I {s} -I {s}", .{ tmp_dir, abs_c_out, tmp_dir, abs_rl_inc });
 
     // ---- Write hot-reload harness ------------------------------------------
     const harness_path = try std.fmt.allocPrint(frame_alloc, "{s}/harness.c", .{tmp_dir});
@@ -680,14 +677,14 @@ fn runRaylibHotReload(path: []const u8, link_libs: []const []const u8, backing: 
         defer hf.close();
         const hw = hf.deprecatedWriter();
 
-        var has_on_init   = false;
-        var has_on_tick   = false;
-        var has_on_draw   = false;
+        var has_on_init = false;
+        var has_on_tick = false;
+        var has_on_draw = false;
         var has_on_unload = false;
         for (ir_module.functions) |func| {
-            if (std.mem.eql(u8, func.name, "on_init"))   has_on_init   = true;
-            if (std.mem.eql(u8, func.name, "on_tick"))   has_on_tick   = true;
-            if (std.mem.eql(u8, func.name, "on_draw"))   has_on_draw   = true;
+            if (std.mem.eql(u8, func.name, "on_init")) has_on_init = true;
+            if (std.mem.eql(u8, func.name, "on_tick")) has_on_tick = true;
+            if (std.mem.eql(u8, func.name, "on_draw")) has_on_draw = true;
             if (std.mem.eql(u8, func.name, "on_unload")) has_on_unload = true;
         }
 
@@ -772,7 +769,7 @@ fn runRaylibHotReload(path: []const u8, link_libs: []const []const u8, backing: 
             \\    InitWindow(800, 600, "Chasm (hot-reload)");
             \\    SetTargetFPS(60);
             \\
-            , .{ abs_path, chasm_exe, tmp_dir, cc_reload_cmd.items });
+        , .{ abs_path, chasm_exe, tmp_dir, cc_reload_cmd.items });
 
         if (has_on_init) try hw.print("    fn_on_init(&ctx);\n", .{});
 
@@ -787,28 +784,28 @@ fn runRaylibHotReload(path: []const u8, link_libs: []const []const u8, backing: 
             \\        }}
             \\        double dt = (double)GetFrameTime();
             \\
-            , .{});
+        , .{});
 
         if (has_on_tick) try hw.print("        fn_on_tick(&ctx, dt);\n", .{});
         try hw.print(
             \\        BeginDrawing();
             \\        ClearBackground((Color){{0,0,0,255}});
             \\
-            , .{});
+        , .{});
         if (has_on_draw) try hw.print("        fn_on_draw(&ctx);\n", .{});
         try hw.print(
             \\        EndDrawing();
             \\        chasm_clear_frame(&ctx);
             \\    }}
             \\
-            , .{});
+        , .{});
         if (has_on_unload) try hw.print("    fn_on_unload(&ctx);\n", .{});
         try hw.print(
             \\    CloseWindow();
             \\    return 0;
             \\}}
             \\
-            , .{});
+        , .{});
     }
 
     // ---- Compile harness → binary ------------------------------------------
@@ -827,8 +824,8 @@ fn runRaylibHotReload(path: []const u8, link_libs: []const []const u8, backing: 
         try clean_args.appendSlice(backing, &.{ "-I", rl_inc, rl_lib });
         if (builtin.os.tag == .macos) {
             try clean_args.appendSlice(backing, &.{
-                "-framework", "OpenGL", "-framework", "Cocoa",
-                "-framework", "IOKit",  "-framework", "CoreVideo",
+                "-framework", "OpenGL",    "-framework", "Cocoa",
+                "-framework", "IOKit",     "-framework", "CoreVideo",
                 "-framework", "CoreAudio", "-framework", "AudioToolbox",
             });
         } else if (builtin.os.tag == .linux) {
@@ -911,20 +908,20 @@ fn runModeWithLinks(path: []const u8, link_libs: []const []const u8, engine_rayl
     if (engine_raylib) {
         // ---- Raylib game-loop harness ------------------------------------
         // Detect which hooks the script provides.
-        var has_on_init   = false;
-        var has_on_tick   = false;
-        var has_on_draw   = false;
+        var has_on_init = false;
+        var has_on_tick = false;
+        var has_on_draw = false;
         var has_on_unload = false;
         for (ir_module.functions) |func| {
-            if (std.mem.eql(u8, func.name, "on_init"))   has_on_init   = true;
-            if (std.mem.eql(u8, func.name, "on_tick"))   has_on_tick   = true;
-            if (std.mem.eql(u8, func.name, "on_draw"))   has_on_draw   = true;
+            if (std.mem.eql(u8, func.name, "on_init")) has_on_init = true;
+            if (std.mem.eql(u8, func.name, "on_tick")) has_on_tick = true;
+            if (std.mem.eql(u8, func.name, "on_draw")) has_on_draw = true;
             if (std.mem.eql(u8, func.name, "on_unload")) has_on_unload = true;
         }
         try hw.print("#include \"chasm_rl.h\"\n\n", .{});
         try hw.print("void chasm_module_init(ChasmCtx *ctx);\n", .{});
-        if (has_on_tick)   try hw.print("void chasm_on_tick(ChasmCtx *ctx, double dt);\n", .{});
-        if (has_on_draw)   try hw.print("void chasm_on_draw(ChasmCtx *ctx);\n", .{});
+        if (has_on_tick) try hw.print("void chasm_on_tick(ChasmCtx *ctx, double dt);\n", .{});
+        if (has_on_draw) try hw.print("void chasm_on_draw(ChasmCtx *ctx);\n", .{});
         if (has_on_init) {
             try hw.print("void chasm_on_init(ChasmCtx *ctx);\n", .{});
         } else {
@@ -953,13 +950,13 @@ fn runModeWithLinks(path: []const u8, link_libs: []const []const u8, engine_rayl
             \\    while (!WindowShouldClose()) {{
             \\        double dt = (double)GetFrameTime();
             \\
-            , .{});
+        , .{});
         if (has_on_tick) try hw.print("        chasm_on_tick(&ctx, dt);\n", .{});
         try hw.print(
             \\        BeginDrawing();
             \\        ClearBackground((Color){{0,0,0,255}});
             \\
-            , .{});
+        , .{});
         if (has_on_draw) try hw.print("        chasm_on_draw(&ctx);\n", .{});
         try hw.print(
             \\        EndDrawing();
@@ -970,7 +967,7 @@ fn runModeWithLinks(path: []const u8, link_libs: []const []const u8, engine_rayl
             \\    return 0;
             \\}}
             \\
-            , .{});
+        , .{});
     } else {
         // ---- Standard harness: call main if present, else all public zero-arg fns -------
         try hw.print("#include \"chasm_rt.h\"\n#include <stdio.h>\n#include <stdlib.h>\n\n", .{});
@@ -992,7 +989,7 @@ fn runModeWithLinks(path: []const u8, link_libs: []const []const u8, engine_rayl
         try hw.print("void chasm_module_init(ChasmCtx *ctx);\n\n", .{});
         try hw.print(
             \\int main(void) {{
-            \\    uint8_t frame_mem[64*1024], script_mem[64*1024], persist_mem[256*1024];
+            \\    static uint8_t frame_mem[16*1024*1024], script_mem[32*1024*1024], persist_mem[64*1024*1024];
             \\    ChasmCtx ctx = {{
             \\        .frame      = {{frame_mem,   0, sizeof(frame_mem)}},
             \\        .script     = {{script_mem,  0, sizeof(script_mem)}},
@@ -1000,7 +997,7 @@ fn runModeWithLinks(path: []const u8, link_libs: []const []const u8, engine_rayl
             \\    }};
             \\    chasm_module_init(&ctx);
             \\
-            , .{});
+        , .{});
         for (ir_module.functions) |func| {
             if (!func.is_public or func.params.len > 0) continue;
             if (has_main and !std.mem.eql(u8, func.name, "main")) continue;
@@ -1014,7 +1011,7 @@ fn runModeWithLinks(path: []const u8, link_libs: []const []const u8, engine_rayl
             \\    return 0;
             \\}}
             \\
-            , .{});
+        , .{});
     }
     harness_file.close();
 
@@ -1110,5 +1107,5 @@ fn usage() !void {
         \\  chasm --watch <file.chasm>           — watch + recompile on change
         \\  chasm --version                      — print version
         \\
-        , .{});
+    , .{});
 }

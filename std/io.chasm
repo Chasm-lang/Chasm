@@ -1,1 +1,34 @@
--- TODO: standard library
+# std/io.chasm — Console, file I/O, and time.
+# Import with: import "io"
+
+# ---- C-backed primitives ---------------------------------------------------
+extern fn print(v: int) -> void
+extern fn print_f(v: float) -> void
+extern fn print_s(v: str) -> void
+extern fn print_b(v: bool) -> void
+extern fn log(v: int) -> void
+extern fn assert(cond: bool) -> void
+extern fn assert_eq(a: int, b: int) -> void
+extern fn todo() -> void
+extern fn file_read(path: str) -> str
+extern fn file_write(path: str, content: str) -> void
+extern fn file_exists(path: str) -> bool
+extern fn time_now() -> float
+extern fn time_ms() -> int
+
+# ---- Pure Chasm utilities --------------------------------------------------
+
+# Print a labelled integer value: "label: 42"
+defp print_label(label :: string, v :: int) do
+  print_s(str_concat(str_concat(label, ": "), int_to_str(v)))
+end
+
+# Print a labelled float value: "label: 3.14"
+defp print_label_f(label :: string, v :: float) do
+  print_s(str_concat(str_concat(label, ": "), float_to_str(v)))
+end
+
+# Print a separator line of dashes.
+defp print_sep() do
+  print_s("---")
+end

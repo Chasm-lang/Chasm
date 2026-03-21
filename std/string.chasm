@@ -1,1 +1,103 @@
--- TODO: standard library
+# std/string.chasm — String utilities for Chasm.
+# Import with: import "string"
+
+# ---- C-backed primitives ---------------------------------------------------
+extern fn str_len(s: str) -> int
+extern fn str_concat(a: str, b: str) -> str
+extern fn str_slice(s: str, from: int, to: int) -> str
+extern fn str_char_at(s: str, i: int) -> int
+extern fn str_from_char(c: int) -> str
+extern fn str_upper(s: str) -> str
+extern fn str_lower(s: str) -> str
+extern fn str_trim(s: str) -> str
+extern fn str_contains(s: str, sub: str) -> bool
+extern fn str_starts_with(s: str, prefix: str) -> bool
+extern fn str_ends_with(s: str, suffix: str) -> bool
+extern fn str_eq(a: str, b: str) -> bool
+extern fn str_repeat(s: str, n: int) -> str
+extern fn int_to_str(v: int) -> str
+extern fn float_to_str(v: float) -> str
+extern fn bool_to_str(v: bool) -> str
+extern fn to_int(v: float) -> int
+extern fn to_float(v: int) -> float
+
+# ---- Pure Chasm utilities --------------------------------------------------
+
+# Return the last n characters of s.
+defp str_tail(s :: string, n :: int) :: string do
+  l = str_len(s)
+  if n >= l do return s end
+  return str_slice(s, l - n, l)
+end
+
+# Return the first n characters of s.
+defp str_head(s :: string, n :: int) :: string do
+  l = str_len(s)
+  if n >= l do return s end
+  return str_slice(s, 0, n)
+end
+
+# Return true if s is empty.
+defp str_empty(s :: string) :: bool do
+  return str_len(s) == 0
+end
+
+# Pad s on the right with spaces to width w.
+defp str_pad_right(s :: string, w :: int) :: string do
+  l = str_len(s)
+  if l >= w do return s end
+  return str_concat(s, str_repeat(" ", w - l))
+end
+
+# Pad s on the left with spaces to width w.
+defp str_pad_left(s :: string, w :: int) :: string do
+  l = str_len(s)
+  if l >= w do return s end
+  return str_concat(str_repeat(" ", w - l), s)
+end
+
+# Return the index of the first occurrence of sub in s, or -1 if not found.
+defp str_index_of(s :: string, sub :: string) :: int do
+  sl = str_len(s)
+  pl = str_len(sub)
+  if pl == 0 do return 0 end
+  if pl > sl do return -1 end
+  i = 0
+  while i <= sl - pl do
+    if str_slice(s, i, i + pl) == sub do
+      return i
+    end
+    i = i + 1
+  end
+  return -1
+end
+
+# Count non-overlapping occurrences of sub in s.
+defp str_count(s :: string, sub :: string) :: int do
+  sl  = str_len(s)
+  pl  = str_len(sub)
+  cnt = 0
+  i   = 0
+  if pl == 0 do return 0 end
+  while i <= sl - pl do
+    if str_slice(s, i, i + pl) == sub do
+      cnt = cnt + 1
+      i   = i + pl
+    else
+      i = i + 1
+    end
+  end
+  return cnt
+end
+
+# Reverse a string.
+defp str_reverse(s :: string) :: string do
+  l   = str_len(s)
+  i   = l - 1
+  out = ""
+  while i >= 0 do
+    out = str_concat(out, str_from_char(str_char_at(s, i)))
+    i   = i - 1
+  end
+  return out
+end

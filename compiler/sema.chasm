@@ -127,13 +127,14 @@ end
 # ---- Type resolution from name string ----------------------------------------
 
 defp resolve_type(name :: string, structs :: []StructDef) :: int do
-  if name == "int"    do return 1 end
-  if name == "float"  do return 2 end
-  if name == "bool"   do return 3 end
-  if name == "string" do return 4 end
-  if name == "str"    do return 4 end
-  if name == "atom"   do return 5 end
-  if name == "void"   do return 6 end
+  if name == "int"      do return 1 end
+  if name == "float"    do return 2 end
+  if name == "bool"     do return 3 end
+  if name == "string"   do return 4 end
+  if name == "str"      do return 4 end
+  if name == "atom"     do return 5 end
+  if name == "void"     do return 6 end
+  if name == "strbuild" do return 8 end
   # Array type: starts with "[]"
   if str_len(name) >= 2 do
     if str_slice(name, 0, 2) == "[]" do
@@ -147,16 +148,43 @@ end
 # ---- Built-in function return types ------------------------------------------
 
 defp builtin_ret(name :: string) :: int do
-  if name == "str_concat"    do return 4 end  # string
-  if name == "int_to_str"    do return 4 end
-  if name == "float_to_str"  do return 4 end
-  if name == "atom_to_str"   do return 4 end
-  if name == "str_to_int"    do return 1 end  # int
-  if name == "str_len"       do return 1 end
-  if name == "str_char_at"   do return 1 end
-  if name == "str_slice"     do return 4 end  # string
-  if name == "file_read"     do return 4 end
-  if name == "print"         do return 6 end  # void
+  # string-returning
+  if name == "str_concat"        do return 4 end
+  if name == "str_slice"         do return 4 end
+  if name == "str_repeat"        do return 4 end
+  if name == "str_from_char"     do return 4 end
+  if name == "str_upper"         do return 4 end
+  if name == "str_lower"         do return 4 end
+  if name == "str_trim"          do return 4 end
+  if name == "int_to_str"        do return 4 end
+  if name == "float_to_str"      do return 4 end
+  if name == "bool_to_str"       do return 4 end
+  if name == "atom_to_str"       do return 4 end
+  if name == "file_read"         do return 4 end
+  if name == "str_builder_build" do return 4 end
+  # strbuild-returning
+  if name == "str_builder_new"   do return 8 end
+  # int-returning
+  if name == "str_len"         do return 1 end
+  if name == "str_char_at"     do return 1 end
+  if name == "str_to_int"      do return 1 end
+  if name == "str_index_of"    do return 1 end
+  if name == "time_ms"         do return 1 end
+  if name == "rand_int"        do return 1 end
+  # bool-returning
+  if name == "str_contains"    do return 3 end
+  if name == "str_starts_with" do return 3 end
+  if name == "str_ends_with"   do return 3 end
+  if name == "str_eq"          do return 3 end
+  if name == "file_exists"     do return 3 end
+  # float-returning
+  if name == "time_now"        do return 2 end
+  if name == "rand"            do return 2 end
+  if name == "rand_range"      do return 2 end
+  # array-returning
+  if name == "array_new"       do return 7 end
+  # void
+  if name == "print"           do return 6 end
   return 0
 end
 
@@ -206,6 +234,11 @@ defp collect_struct_list(pool :: []Node, ch :: []int, root :: int, first_tid :: 
       result.push(sd)
       tid = tid + 1
     end
+    if decl.tag == :enum_decl do
+      sd :: StructDef = StructDef{ name: decl.name, type_id: tid, node_idx: decl_idx }
+      result.push(sd)
+      tid = tid + 1
+    end
     i = i + 1
   end
   return result
@@ -247,7 +280,7 @@ defp collect_fn_list(pool :: []Node, ch :: []int, root :: int, structs :: []Stru
   while i < cl do
     decl_idx = ch.get(cs + i)
     decl     = pool.get(decl_idx)
-    if decl.tag == :fn_decl do
+    if decl.tag == :fn_decl or decl.tag == :extern_decl do
       fname   = fn_split_name(decl.name)
       ret_tid = fn_split_ret(decl.name, structs)
       sig :: FnSig = FnSig{ name: fname, ret_tid: ret_tid, node_idx: decl_idx }
@@ -338,7 +371,8 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
   end
 
   if tag == :method_call do
-    recv_t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    recv_t    = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    recv_node = pool.get(node.a)
     # Walk args (b=args_start in ch, c=args_len)
     cs = node.b
     cl = node.c
@@ -353,13 +387,24 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
     if mn == "push"  do types.set(idx, 6) return 6 end
     if mn == "set"   do types.set(idx, 6) return 6 end
     if mn == "get" do
-      recv_node = pool.get(node.a)
       elem_t = 0
       if recv_node.tag == :ident do
         elem_t = sym_elem_lookup(syms, sym_len, recv_node.name)
       end
       types.set(idx, elem_t)
       return elem_t
+    end
+    # Namespace call: receiver is an undeclared ident (e.g. utils.add(...))
+    # Look up the method name as a plain function in fns.
+    if recv_node.tag == :ident do
+      if recv_t == 0 do
+        ns_ret = fnsig_lookup(fns, mn)
+        if ns_ret == 0 do
+          ns_ret = builtin_ret(mn)
+        end
+        types.set(idx, ns_ret)
+        return ns_ret
+      end
     end
     types.set(idx, 0)
     return 0
@@ -377,6 +422,38 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
     _t2 = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.b)
     types.set(idx, 0)
     return 0
+  end
+
+  if tag == :match_expr do
+    _t  = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    as  = node.b
+    al  = node.c
+    ret = 1  # default: int
+    ai  = 0
+    while ai < al do
+      arm_idx = ch.get(as + ai)
+      arm     = pool.get(arm_idx)
+      arm_t   = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, arm.a)
+      if ai == 0 do ret = arm_t end
+      ai = ai + 1
+    end
+    types.set(idx, ret)
+    return ret
+  end
+
+  if tag == :pipe_expr do
+    # a |> f(b) — lhs is piped as first arg to rhs call
+    _lt = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    rt  = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.b)
+    types.set(idx, rt)
+    return rt
+  end
+
+  if tag == :pipe_expr do
+    _lt = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.a)
+    rt  = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, node.b)
+    types.set(idx, rt)
+    return rt
   end
 
   if tag == :struct_lit do
@@ -580,5 +657,6 @@ defp type_name(tid :: int) :: string do
   if tid == 5 do return "atom" end
   if tid == 6 do return "void" end
   if tid == 7 do return "array" end
+  if tid == 8 do return "strbuild" end
   return str_concat("struct#", int_to_str(tid))
 end

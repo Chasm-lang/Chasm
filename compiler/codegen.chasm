@@ -58,6 +58,7 @@ defp c_type(tid :: int, structs :: []StructDef) :: string do
   if tid == 5 do return "const char*" end
   if tid == 6 do return "void" end
   if tid == 7 do return "ChasmArray" end
+  if tid == 8 do return "ChasmStrBuilder" end
   i = 0
   while i < structs.len do
     s = structs.get(i)
@@ -277,6 +278,22 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
 
   if tag == :field_get do
     obj_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    obj_t = types.get(node.a)
+    # Check if the object is an enum type — emit EnumName_Variant
+    obj_node = pool.get(node.a)
+    if obj_node.tag == :ident do
+      si = 0
+      while si < structs.len do
+        sd = structs.get(si)
+        if sd.name == obj_node.name do
+          sn = pool.get(sd.node_idx)
+          if sn.tag == :enum_decl do
+            return str_concat(sd.name, str_concat("_", node.name))
+          end
+        end
+        si = si + 1
+      end
+    end
     return str_concat(obj_c, str_concat(".", node.name))
   end
 
@@ -300,6 +317,83 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
       fi = fi + 1
     end
     return str_concat("(", str_concat(node.name, str_concat("){ ", str_concat(flds_c, " }"))))
+  end
+
+  if tag == :match_expr do
+    subj_c    = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    subj_t    = types.get(node.a)
+    arm_start = node.b
+    arm_count = node.c
+    if arm_count == 0 do return "0" end
+    last_node = pool.get(ch.get(arm_start + arm_count - 1))
+    result    = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, last_node.a)
+    idx2 = arm_count - 2
+    while idx2 >= 0 do
+      arm_node  = pool.get(ch.get(arm_start + idx2))
+      arm_val_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, arm_node.a)
+      pat_lex   = arm_node.name
+      # Wildcard _ is always the default (already handled as last arm)
+      if pat_lex != "_" do
+        # Determine comparison style based on subject type and pattern format
+        # Atom pattern: starts with ':'
+        # Enum pattern: contains '.' (e.g. "Direction.North")
+        # Integer pattern: plain number
+        cond_str = ""
+        if str_len(pat_lex) > 0 and str_char_at(pat_lex, 0) == 58 do
+          # Atom pattern: strip leading ':'
+          pat_name = str_slice(pat_lex, 1, str_len(pat_lex))
+          cond_str = str_concat("(strcmp(", str_concat(subj_c, str_concat(", \042", str_concat(pat_name, "\042) == 0)"))))
+        else
+          # Check for dot (enum pattern like "Direction.North")
+          dot_pos = -1
+          pi = 0
+          while pi < str_len(pat_lex) do
+            if str_char_at(pat_lex, pi) == 46 do
+              dot_pos = pi
+              pi = str_len(pat_lex)
+            end
+            pi = pi + 1
+          end
+          if dot_pos >= 0 do
+            # Enum pattern: emit EnumName_Variant
+            enum_name    = str_slice(pat_lex, 0, dot_pos)
+            variant_name = str_slice(pat_lex, dot_pos + 1, str_len(pat_lex))
+            enum_const   = str_concat(enum_name, str_concat("_", variant_name))
+            cond_str = str_concat("(", str_concat(subj_c, str_concat(" == ", str_concat(enum_const, ")"))))
+          else
+            # Plain atom/string pattern
+            cond_str = str_concat("(strcmp(", str_concat(subj_c, str_concat(", \042", str_concat(pat_lex, "\042) == 0)"))))
+          end
+        end
+        result = str_concat("(", str_concat(cond_str, str_concat(" ? ", str_concat(arm_val_c, str_concat(" : ", str_concat(result, ")"))))))
+      end
+      idx2 = idx2 - 1
+    end
+    return result
+  end
+
+  if tag == :pipe_expr do
+    # a |> f(b, c) transforms to f(a, b, c)
+    lhs_c    = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    rhs_node = pool.get(node.b)
+    # rhs must be a call node
+    if rhs_node.tag == :call do
+      fn_name  = rhs_node.name
+      cs       = rhs_node.a
+      cl       = rhs_node.b
+      # Build args: lhs first, then original args
+      args_str = lhs_c
+      ai = 0
+      while ai < cl do
+        arg_idx = ch.get(cs + ai)
+        ac = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, arg_idx)
+        args_str = str_concat(args_str, str_concat(", ", ac))
+        ai = ai + 1
+      end
+      return str_concat("chasm_", str_concat(fn_name, str_concat("(ctx, ", str_concat(args_str, ")"))))
+    end
+    # Fallback: just emit rhs (shouldn't happen with valid pipe usage)
+    return emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.b)
   end
 
   return "0"
@@ -480,33 +574,93 @@ defp emit_array_helpers(sn :: string) do
   print("")
 end
 
-# ---- Emit struct typedefs + typed array helpers ------------------------------
+# ---- Emit enum typedef -------------------------------------------------------
 
-defp emit_struct_defs(structs :: []StructDef, fields :: []FieldDef) do
+defp emit_enum_def(pool :: []Node, ch :: []int, structs :: []StructDef, decl_idx :: int) do
+  decl = pool.get(decl_idx)
+  ename = decl.name
+  vs    = decl.a
+  vl    = decl.b
+  print("typedef enum {")
+  i = 0
+  while i < vl do
+    vi   = ch.get(vs + i)
+    vn   = pool.get(vi)
+    # variant name may be "Name" or "Name:type1,type2" — extract just the name
+    raw  = vn.name
+    vname = raw
+    ci = 0
+    while ci < str_len(raw) do
+      if str_char_at(raw, ci) == 58 do
+        vname = str_slice(raw, 0, ci)
+        ci = str_len(raw)
+      end
+      ci = ci + 1
+    end
+    comma = ","
+    if i == vl - 1 do comma = "" end
+    print(str_concat("  ", str_concat(ename, str_concat("_", str_concat(vname, str_concat(" = ", str_concat(int_to_str(i), comma)))))))
+    i = i + 1
+  end
+  print(str_concat("} ", str_concat(ename, ";")))
+  print("")
+end
+
+
+
+defp emit_struct_defs(structs :: []StructDef, fields :: []FieldDef, pool :: []Node, ch :: []int) do
   if structs.len == 0 do return end
-  print("/* Struct types */")
+  # First pass: emit enums
+  has_enums = false
   si = 0
   while si < structs.len do
     sd = structs.get(si)
-    print("typedef struct {")
-    fi = 0
-    while fi < fields.len do
-      fd = fields.get(fi)
-      if fd.struct_tid == sd.type_id do
-        print(str_concat("    ", str_concat(c_type(fd.type_id, structs), str_concat(" ", str_concat(fd.name, ";")))))
+    sn = pool.get(sd.node_idx)
+    if sn.tag == :enum_decl do
+      if has_enums == false do
+        print("/* Enum types */")
+        has_enums = true
       end
-      fi = fi + 1
+      emit_enum_def(pool, ch, structs, sd.node_idx)
     end
-    print(str_concat("} ", str_concat(sd.name, ";")))
-    print("")
     si = si + 1
   end
-  print("/* Typed array helpers */")
+  # Second pass: emit structs
+  has_structs = false
   si = 0
   while si < structs.len do
     sd = structs.get(si)
-    emit_array_helpers(sd.name)
+    sn = pool.get(sd.node_idx)
+    if sn.tag == :defstruct do
+      if has_structs == false do
+        print("/* Struct types */")
+        has_structs = true
+      end
+      print("typedef struct {")
+      fi = 0
+      while fi < fields.len do
+        fd = fields.get(fi)
+        if fd.struct_tid == sd.type_id do
+          print(str_concat("    ", str_concat(c_type(fd.type_id, structs), str_concat(" ", str_concat(fd.name, ";")))))
+        end
+        fi = fi + 1
+      end
+      print(str_concat("} ", str_concat(sd.name, ";")))
+      print("")
+    end
     si = si + 1
+  end
+  if has_structs do
+    print("/* Typed array helpers */")
+    si = 0
+    while si < structs.len do
+      sd = structs.get(si)
+      sn = pool.get(sd.node_idx)
+      if sn.tag == :defstruct do
+        emit_array_helpers(sd.name)
+      end
+      si = si + 1
+    end
   end
 end
 
@@ -529,7 +683,8 @@ defp emit_fwd_decls(pool :: []Node, ch :: []int, structs :: []StructDef, fns :: 
       param_node = pool.get(param_idx)
       type_ref   = pool.get(param_node.a)
       param_tid  = resolve_type(type_ref.name, structs)
-      params_s   = str_concat(params_s, str_concat(", ", c_type(param_tid, structs)))
+      param_c    = c_type(param_tid, structs)
+      params_s   = str_concat(params_s, str_concat(", ", param_c))
       j = j + 1
     end
     print(str_concat(ret_c, str_concat(" chasm_", str_concat(f.name, str_concat("(ChasmCtx *ctx", str_concat(params_s, ");"))))))
@@ -589,7 +744,7 @@ defp codegen(pool :: []Node, ch :: []int, root :: int,
   print("/* Generated by Chasm bootstrap compiler - do not edit. */")
   print("#include \042chasm_rt.h\042")
   print("")
-  emit_struct_defs(structs, fields)
+  emit_struct_defs(structs, fields, pool, ch)
   emit_fwd_decls(pool, ch, structs, fns)
   root_node = pool.get(root)
   cs = root_node.a

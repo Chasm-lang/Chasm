@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.4.0] — 2026-03-21 — Language features + bootstrap arena fix
+
+### Summary
+
+Five new language features are now fully implemented end-to-end: `import`, `strbuild`, the pipe operator `|>`, `case/when`, and `enum`. The bootstrap binary was rebuilt with larger arenas (16 MB frame / 32 MB script / 64 MB persistent) to handle the grown compiler source. Fixpoint verified.
+
+### New language features
+
+#### `import`
+`import "path"` is resolved by the Go CLI (`resolveImports` in `cmd/cli/cli.go`) before compilation. All public functions and extern declarations from the imported file are concatenated into the combined source passed to the compiler.
+
+#### `strbuild`
+Type ID 8 added to sema (`resolve_type`, `builtin_ret`) and codegen (`c_type`). Maps to `ChasmStrBuilder` in `chasm_rt.h`. `str_builder_new()`, `str_builder_push()`, `str_builder_append()`, and `str_builder_build()` all resolve correctly.
+
+#### Pipe operator `|>`
+`a |> f(b)` desugars to `f(a, b)`.
+
+- **Lexer**: `|>` lexed as `:pipe` token.
+- **Parser**: `parse_pipe` wraps `parse_or`; emits `:pipe_expr` nodes with lhs/rhs.
+- **Sema**: `:pipe_expr` walks both sides; result type is rhs type.
+- **Codegen**: rhs must be a `:call` node; lhs is prepended as first argument.
+
+#### `case / when / end`
+```chasm
+case status do
+  when :idle    -> "standing by"
+  when :running -> "in motion"
+  _             -> "unknown"
+end
+```
+- **Lexer**: `case` and `when` added as keywords.
+- **Parser**: `case expr do when pat -> expr ... end` parsed into `:match_expr` nodes (same IR as `match`). Dotted patterns (`EnumName.Variant`) are parsed by consuming the `.Variant` suffix after the base name.
+- **Codegen**: pattern dispatch uses `strcmp` for atom patterns (`:idle`), `==` for enum/dotted patterns (`Direction.North` → `Direction_North`), and `_` is the catch-all default.
+
+#### `enum`
+```chasm
+enum Direction { North, South, East, West }
+enum Shape { Circle(float), Rect(float, float) }
+```
+- **Lexer**: `enum` keyword added.
+- **Parser**: `enum Name { Variant, ... }` parsed at file scope into `:enum_decl` nodes. Payload types encoded into the variant name string as `"Name:type1,type2"` (no `ch[]` slots used, avoiding pool corruption).
+- **Sema**: `collect_struct_list` now registers enum types alongside structs, assigning them type IDs so `EnumName` resolves as a type.
+- **Codegen**: `emit_enum_def` emits `typedef enum { EnumName_Variant = N, ... } EnumName;`. `emit_struct_defs` emits enums first, then structs. `field_get` on an enum-typed ident emits `EnumName_Variant` instead of `obj.field`.
+
+### Bootstrap arena fix
+
+The self-hosted bootstrap binary was compiled with 1 MB frame / 4 MB script / 16 MB persistent arenas. As the compiler source grew, the frame arena was exhausted during codegen string concatenations, truncating output mid-function.
+
+Fix:
+- `archive/zig-compiler/src/main.zig` updated to emit 16 MB / 32 MB / 64 MB arenas in the standalone harness.
+- Zig compiler rebuilt; used to compile the full Chasm compiler source into a new bootstrap binary.
+- `cmd/cli/cli.go` `writeStandaloneHarness` updated to match (16 MB / 32 MB / 64 MB).
+- Three-stage fixpoint verified (`stage2.c == stage3.c`). Bootstrap binary replaced.
+
+### Bug fixes
+
+- `codegen.chasm`: `match_expr` pattern `\"` replaced with `\042` for Zig-lexer compatibility (Zig string lexer has no escape processing).
+- `codegen.chasm`: `emit_struct_defs` signature extended with `pool` and `ch` parameters so enum vs struct node tags can be distinguished at emit time.
+
+---
+
 ## [0.3.0] — 2026-03-20 — Go CLI + game script support
 
 ### Summary

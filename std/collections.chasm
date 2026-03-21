@@ -1,1 +1,129 @@
--- TODO: standard library
+# std/collections.chasm — Array utilities for Chasm.
+# Import with: import "collections"
+
+# ---- C-backed (extern declarations for type checking) ----------------------
+extern fn array_push(v: int) -> void
+extern fn array_pop() -> int
+extern fn array_get(i: int) -> int
+extern fn array_set(i: int, v: int) -> void
+extern fn array_len() -> int
+extern fn array_clear() -> void
+
+# ---- Pure Chasm utilities --------------------------------------------------
+
+# Return true if arr contains value v.
+defp array_contains(arr :: []int, v :: int) :: bool do
+  i = 0
+  n = array_len(arr)
+  while i < n do
+    if array_get(arr, i) == v do
+      return true
+    end
+    i = i + 1
+  end
+  return false
+end
+
+# Return the index of value v in arr, or -1 if not found.
+defp array_index_of(arr :: []int, v :: int) :: int do
+  i = 0
+  n = array_len(arr)
+  while i < n do
+    if array_get(arr, i) == v do
+      return i
+    end
+    i = i + 1
+  end
+  return -1
+end
+
+# Return the sum of all elements.
+defp array_sum(arr :: []int) :: int do
+  total = 0
+  i     = 0
+  n     = array_len(arr)
+  while i < n do
+    total = total + array_get(arr, i)
+    i     = i + 1
+  end
+  return total
+end
+
+# Return the minimum value in arr (assumes arr is non-empty).
+defp array_min(arr :: []int) :: int do
+  m = array_get(arr, 0)
+  i = 1
+  n = array_len(arr)
+  while i < n do
+    v = array_get(arr, i)
+    if v < m do
+      m = v
+    end
+    i = i + 1
+  end
+  return m
+end
+
+# Return the maximum value in arr (assumes arr is non-empty).
+defp array_max(arr :: []int) :: int do
+  m = array_get(arr, 0)
+  i = 1
+  n = array_len(arr)
+  while i < n do
+    v = array_get(arr, i)
+    if v > m do
+      m = v
+    end
+    i = i + 1
+  end
+  return m
+end
+
+# Reverse arr in place.
+defp array_reverse(arr :: []int) do
+  lo = 0
+  hi = array_len(arr) - 1
+  while lo < hi do
+    a = array_get(arr, lo)
+    b = array_get(arr, hi)
+    array_set(arr, lo, b)
+    array_set(arr, hi, a)
+    lo = lo + 1
+    hi = hi - 1
+  end
+end
+
+# Fill all existing elements with value v.
+defp array_fill(arr :: []int, v :: int) do
+  i = 0
+  n = array_len(arr)
+  while i < n do
+    array_set(arr, i, v)
+    i = i + 1
+  end
+end
+
+# Remove element at index i by swapping with last and popping. O(1), unordered.
+defp array_remove_swap(arr :: []int, i :: int) do
+  last = array_len(arr) - 1
+  if i != last do
+    array_set(arr, i, array_get(arr, last))
+  end
+  array_pop(arr)
+end
+
+# Sort arr ascending (insertion sort).
+defp array_sort(arr :: []int) do
+  n = array_len(arr)
+  i = 1
+  while i < n do
+    key = array_get(arr, i)
+    j   = i - 1
+    while j >= 0 and array_get(arr, j) > key do
+      array_set(arr, j + 1, array_get(arr, j))
+      j = j - 1
+    end
+    array_set(arr, j + 1, key)
+    i = i + 1
+  end
+end

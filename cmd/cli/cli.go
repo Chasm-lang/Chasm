@@ -2,10 +2,10 @@
 //
 // Implements: compile, run, watch, version.
 // Compilation pipeline:
-//   1. Write source (+ optional prelude) to /tmp/sema_combined.chasm
-//   2. Run the bootstrap binary → /tmp/chasm_out.c, /tmp/chasm_rt.h
-//   3. cc-compile with the appropriate harness
-//   4. exec (for run/watch)
+//  1. Write source (+ optional prelude) to /tmp/sema_combined.chasm
+//  2. Run the bootstrap binary → /tmp/chasm_out.c, /tmp/chasm_rt.h
+//  3. cc-compile with the appropriate harness
+//  4. exec (for run/watch)
 package main
 
 import (
@@ -22,7 +22,9 @@ import (
 const version = "0.2.0"
 
 // defaultChasmHome is baked in at build time by install.sh:
-//   go build -ldflags "-X main.defaultChasmHome=/path/to/repo"
+//
+//	go build -ldflags "-X main.defaultChasmHome=/path/to/repo"
+//
 // Falls back to CHASM_HOME env var or executable-walk detection.
 var defaultChasmHome string
 
@@ -70,8 +72,11 @@ func runRun(args []string) {
 	if path == "" {
 		fatalf("usage: chasm run <file.chasm> [--engine raylib] [--watch]\n")
 	}
-	buildAndRun(path, opts, false)
+	buildAndRun(path, opts, false, nil)
 }
+
+// runningProc holds the currently running game process for watch mode
+var runningProc *exec.Cmd
 
 func runWatch(args []string) {
 	if len(args) == 0 {
@@ -88,11 +93,17 @@ func runWatch(args []string) {
 			continue
 		}
 		if info.ModTime().After(lastMod) {
+			// Kill previous process if running
+			if runningProc != nil && runningProc.Process != nil {
+				_ = runningProc.Process.Kill()
+				_ = runningProc.Wait()
+				runningProc = nil
+			}
 			if !lastMod.IsZero() {
 				fmt.Printf("\n[watch] %s changed — recompiling...\n", path)
 			}
 			lastMod = info.ModTime()
-			buildAndRun(path, opts, true)
+			buildAndRun(path, opts, true, &runningProc)
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
@@ -105,19 +116,24 @@ func runWatch(args []string) {
 // compileChasm runs the bootstrap binary on path and returns the path to the
 // generated /tmp/chasm_out.c.
 func compileChasm(path string, opts options) string {
-	src, err := os.ReadFile(path)
-	if err != nil {
-		fatalf("read %s: %v\n", path, err)
+	home := chasmHome()
+	visited := map[string]bool{}
+
+	var combined []byte
+	if opts.engineRaylib {
+		prelude, err := resolveImports(raylibChasmPath(), home, visited)
+		if err != nil {
+			fatalf("raylib prelude: %v\n", err)
+		}
+		combined = append(combined, prelude...)
+		combined = append(combined, '\n')
 	}
 
-	combined := src
-	if opts.engineRaylib {
-		prelude, err := os.ReadFile(raylibChasmPath())
-		if err != nil {
-			fatalf("read raylib prelude: %v\n", err)
-		}
-		combined = append(prelude, append([]byte("\n"), src...)...)
+	src, err := resolveImports(path, home, visited)
+	if err != nil {
+		fatalf("%v\n", err)
 	}
+	combined = append(combined, src...)
 
 	if err := os.WriteFile("/tmp/sema_combined.chasm", combined, 0644); err != nil {
 		fatalf("write /tmp/sema_combined.chasm: %v\n", err)
@@ -148,7 +164,8 @@ func compileChasm(path string, opts options) string {
 
 // buildAndRun compiles and executes the result.
 // If quiet is true, build errors still print but run errors are suppressed.
-func buildAndRun(path string, opts options, quiet bool) {
+// If procOut is non-nil, the process is started in background and stored there.
+func buildAndRun(path string, opts options, quiet bool, procOut **exec.Cmd) {
 	outC := compileChasm(path, opts)
 
 	binPath := "/tmp/chasm_run_out"
@@ -175,6 +192,17 @@ func buildAndRun(path string, opts options, quiet bool) {
 	run.Stdin = os.Stdin
 	run.Stdout = os.Stdout
 	run.Stderr = os.Stderr
+
+	// If procOut is provided, start in background for watch mode
+	if procOut != nil {
+		if err := run.Start(); err != nil && !quiet {
+			fmt.Fprintf(os.Stderr, "run: %v\n", err)
+		}
+		*procOut = run
+		return
+	}
+
+	// Otherwise run synchronously
 	if err := run.Run(); err != nil && !quiet {
 		fmt.Fprintf(os.Stderr, "run: %v\n", err)
 	}
@@ -227,9 +255,9 @@ func writeStandaloneHarness() string {
 __attribute__((weak)) void chasm_module_init(ChasmCtx *ctx) { (void)ctx; }
 __attribute__((weak)) void chasm_main(ChasmCtx *ctx) { (void)ctx; }
 
-static uint8_t frame_mem  [ 1 * 1024 * 1024];
-static uint8_t script_mem [ 4 * 1024 * 1024];
-static uint8_t persist_mem[16 * 1024 * 1024];
+static uint8_t frame_mem  [16 * 1024 * 1024];
+static uint8_t script_mem [32 * 1024 * 1024];
+static uint8_t persist_mem[64 * 1024 * 1024];
 
 int main(void) {
     ChasmCtx ctx = {
@@ -303,6 +331,66 @@ func bootstrapBin() string {
 		fatalf("bootstrap binary not found: %s\n  Set CHASM_HOME to the chasm repo root.\n", bin)
 	}
 	return bin
+}
+
+// resolveImports returns the fully-expanded source for path with all imports
+// inlined in dependency order. visited tracks resolved absolute paths to
+// prevent duplicates and cycles.
+func resolveImports(path string, home string, visited map[string]bool) ([]byte, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	if visited[abs] {
+		return nil, nil // already included
+	}
+	visited[abs] = true
+
+	raw, err := os.ReadFile(abs)
+	if err != nil {
+		return nil, fmt.Errorf("import %q: %w", path, err)
+	}
+
+	var out []byte
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "import ") {
+			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "import "))
+			if len(rest) >= 2 && rest[0] == '"' {
+				if end := strings.Index(rest[1:], "\""); end >= 0 {
+					importPath := rest[1 : end+1]
+					resolved := resolveImportPath(importPath, filepath.Dir(abs), home)
+					chunk, err := resolveImports(resolved, home, visited)
+					if err != nil {
+						return nil, err
+					}
+					out = append(out, chunk...)
+					out = append(out, '\n')
+					continue // replace the import line with the inlined content
+				}
+			}
+		}
+		out = append(out, []byte(line)...)
+		out = append(out, '\n')
+	}
+	return out, nil
+}
+
+// resolveImportPath resolves an import path to an absolute file path.
+// Search order: 1) absolute (used as-is), 2) relative to the importing file,
+// 3) $CHASM_HOME/std/.
+func resolveImportPath(importPath, dir, home string) string {
+	if !strings.HasSuffix(importPath, ".chasm") {
+		importPath += ".chasm"
+	}
+	if filepath.IsAbs(importPath) {
+		return importPath
+	}
+	rel := filepath.Join(dir, importPath)
+	if _, err := os.Stat(rel); err == nil {
+		return rel
+	}
+	return filepath.Join(home, "std", importPath)
 }
 
 func engineDir() string {
