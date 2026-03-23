@@ -1,0 +1,165 @@
+{
+  "on_tick handler": {
+    "prefix": "tick",
+    "body": [
+      "def on_tick() do",
+      "  $0",
+      "end"
+    ],
+    "description": "Full on_tick boilerplate"
+  },
+  "on_init handler": {
+    "prefix": "init",
+    "body": [
+      "def on_init() do",
+      "  $0",
+      "end"
+    ],
+    "description": "Full on_init boilerplate"
+  },
+  "on_draw handler": {
+    "prefix": "draw",
+    "body": [
+      "def on_draw() do",
+      "  $0",
+      "end"
+    ],
+    "description": "Full on_draw boilerplate"
+  },
+  "main function": {
+    "prefix": "main",
+    "body": [
+      "def main() do",
+      "  $0",
+      "end"
+    ],
+    "description": "Main entry point"
+  },
+  "defstruct block": {
+    "prefix": "struct",
+    "body": [
+      "defstruct ${1:Name} do",
+      "  ${2:field} :: ${3:int}",
+      "  $0",
+      "end"
+    ],
+    "description": "Struct type declaration"
+  },
+  "module attribute": {
+    "prefix": "attr",
+    "body": [
+      "@${1:name} :: ${2:script} ${3:int} = ${0:0}"
+    ],
+    "description": "Module attribute with lifetime"
+  },
+  "function definition": {
+    "prefix": "fn",
+    "body": [
+      "def ${1:name}(${2:param} :: ${3:int}) :: ${4:void} do",
+      "  $0",
+      "end"
+    ],
+    "description": "Public function definition"
+  },
+  "private function": {
+    "prefix": "defp",
+    "body": [
+      "defp ${1:name}(${2:param} :: ${3:int}) :: ${4:void} do",
+      "  $0",
+      "end"
+    ],
+    "description": "Private function definition"
+  },
+  "for range loop": {
+    "prefix": "for",
+    "body": [
+      "for ${1:i} in ${2:0}..${3:10} do",
+      "  $0",
+      "end"
+    ],
+    "description": "For range loop"
+  },
+  "for-in array loop": {
+    "prefix": "forin",
+    "body": [
+      "for ${1:item} in ${2:array} do",
+      "  $0",
+      "end"
+    ],
+    "description": "For-in array iteration"
+  },
+  "case expression": {
+    "prefix": "case",
+    "body": [
+      "case ${1:value} do",
+      "  when ${2:pattern} -> ${3:result}",
+      "  _ -> $0",
+      "end"
+    ],
+    "description": "Pattern match expression"
+  },
+  "if block": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition} do",
+      "  $0",
+      "end"
+    ],
+    "description": "If block"
+  },
+  "if-else block": {
+    "prefix": "ifelse",
+    "body": [
+      "if ${1:condition} do",
+      "  $2",
+      "else",
+      "  $0",
+      "end"
+    ],
+    "description": "If-else block"
+  },
+  "while loop": {
+    "prefix": "while",
+    "body": [
+      "while ${1:condition} do",
+      "  $0",
+      "end"
+    ],
+    "description": "While loop"
+  },
+  "enum declaration": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:Name} { ${2:Variant1}, ${3:Variant2}$0 }"
+    ],
+    "description": "Enum type declaration"
+  },
+  "import statement": {
+    "prefix": "import",
+    "body": [
+      "import \"${0:std/math}\""
+    ],
+    "description": "Import a Chasm module"
+  },
+  "game loop scaffold": {
+    "prefix": "game",
+    "body": [
+      "import \"raylib\"",
+      "",
+      "@${1:state} :: script int = 0",
+      "",
+      "def on_init() do",
+      "  $2",
+      "end",
+      "",
+      "def on_tick() do",
+      "  $3",
+      "end",
+      "",
+      "def on_draw() do",
+      "  $0",
+      "end"
+    ],
+    "description": "Full raylib game loop scaffold"
+  }
+}

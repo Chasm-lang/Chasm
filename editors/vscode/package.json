@@ -1,18 +1,15 @@
 {
   "name": "chasm-language",
   "displayName": "Chasm",
-  "description": "Language support for Chasm — syntax highlighting, diagnostics, and hover via chasm-lsp",
-  "version": "0.1.0",
+  "description": "Language support for Chasm — syntax highlighting, diagnostics, hover, completions, formatting, and CodeLens via chasm-lsp",
+  "version": "0.3.0",
   "publisher": "chasm",
-  "icon": "icon.png",
+  "icon": "Icon.png",
   "engines": {
     "vscode": "^1.75.0"
   },
   "categories": [
     "Programming Languages"
-  ],
-  "activationEvents": [
-    "onLanguage:chasm"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -40,6 +37,32 @@
         "path": "./syntaxes/chasm.tmLanguage.json"
       }
     ],
+    "snippets": [
+      {
+        "language": "chasm",
+        "path": "./snippets/chasm.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "chasm.runFile",
+        "title": "Chasm: Run File",
+        "icon": "$(play)"
+      },
+      {
+        "command": "chasm.formatFile",
+        "title": "Chasm: Format File"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "chasm.runFile",
+          "when": "resourceLangId == chasm",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "Chasm",
       "properties": {
@@ -47,6 +70,19 @@
           "type": "string",
           "default": "",
           "description": "Path to chasm-lsp binary. Leave empty to use the one on your PATH."
+        },
+        "chasm.chasmPath": {
+          "type": "string",
+          "default": "chasm",
+          "description": "Path to the chasm CLI binary used for running files."
+        },
+        "[chasm]": {
+          "type": "object",
+          "default": {
+            "editor.formatOnSave": true,
+            "editor.defaultFormatter": "chasm.chasm-language"
+          },
+          "description": "Default editor settings for Chasm files."
         }
       }
     }

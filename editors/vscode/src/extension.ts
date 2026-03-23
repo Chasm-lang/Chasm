@@ -1,6 +1,6 @@
 import * as path from "path";
 import * as fs from "fs";
-import { workspace, ExtensionContext, window } from "vscode";
+import { workspace, ExtensionContext, window, commands, Uri } from "vscode";
 import {
   LanguageClient,
   LanguageClientOptions,
@@ -15,7 +15,6 @@ export function activate(context: ExtensionContext) {
   let serverPath: string = config.get("serverPath") || "";
 
   if (!serverPath) {
-    // Try common locations
     const candidates = [
       path.join(context.extensionPath, "..", "..", "bin", "chasm-lsp"),
       path.join(process.env.HOME || "", ".local", "bin", "chasm-lsp"),
@@ -56,6 +55,40 @@ export function activate(context: ExtensionContext) {
   );
 
   client.start();
+
+  // ── chasm.runFile command ──────────────────────────────────────────────────
+  // Triggered by CodeLens "▶ Run" or the title bar play button.
+  context.subscriptions.push(
+    commands.registerCommand("chasm.runFile", (filePath?: string) => {
+      // filePath comes from CodeLens arguments; fall back to active editor.
+      const target =
+        filePath ||
+        (window.activeTextEditor
+          ? window.activeTextEditor.document.uri.fsPath
+          : undefined);
+
+      if (!target) {
+        window.showErrorMessage("No Chasm file to run.");
+        return;
+      }
+
+      const chasmBin: string = config.get("chasmPath") || "chasm";
+      const terminal = window.createTerminal("Chasm Run");
+      terminal.show(true);
+      terminal.sendText(`${chasmBin} run "${target}"`);
+    })
+  );
+
+  // ── chasm.formatFile command ───────────────────────────────────────────────
+  context.subscriptions.push(
+    commands.registerCommand("chasm.formatFile", () => {
+      const editor = window.activeTextEditor;
+      if (!editor || editor.document.languageId !== "chasm") {
+        return;
+      }
+      commands.executeCommand("editor.action.formatDocument");
+    })
+  );
 }
 
 export function deactivate(): Thenable<void> | undefined {

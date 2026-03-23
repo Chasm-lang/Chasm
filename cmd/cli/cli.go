@@ -43,6 +43,8 @@ func main() {
 		runRun(os.Args[2:])
 	case "watch":
 		runWatch(os.Args[2:])
+	case "fmt":
+		runFmt(os.Args[2:])
 	case "help", "--help", "-h":
 		usage()
 	default:
@@ -805,6 +807,125 @@ func filterCCErrors(raw []byte, chasmSrc string) {
 	}
 }
 
+// runFmt formats a Chasm source file in-place.
+// It uses the same formatting logic as the LSP's textDocument/formatting handler.
+func runFmt(args []string) {
+	if len(args) == 0 {
+		fatalf("usage: chasm fmt <file.chasm>\n")
+	}
+	path := args[0]
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fatalf("fmt: %v\n", err)
+	}
+	formatted := formatSource(string(data))
+	if formatted == string(data) {
+		fmt.Printf("  %s — already formatted\n", path)
+		return
+	}
+	if err := os.WriteFile(path, []byte(formatted), 0644); err != nil {
+		fatalf("fmt: %v\n", err)
+	}
+	fmt.Printf("  %s — formatted\n", path)
+}
+
+// formatSource applies Chasm formatting rules (shared with LSP formatter).
+func formatSource(src string) string {
+	lines := strings.Split(src, "\n")
+	var out []string
+
+	depth := 0
+	prevWasBlank := false
+	prevWasTopLevel := false
+
+	topLevelStarters := map[string]bool{
+		"def": true, "defp": true, "defstruct": true, "enum": true,
+	}
+	blockOpeners := map[string]bool{
+		"do": true, "defstruct": true,
+	}
+	blockClosers := map[string]bool{
+		"end": true,
+	}
+	blockMiddle := map[string]bool{
+		"else": true,
+	}
+
+	firstToken := func(line string) string {
+		trimmed := strings.TrimSpace(line)
+		idx := strings.IndexAny(trimmed, " \t(")
+		if idx < 0 {
+			return trimmed
+		}
+		return trimmed[:idx]
+	}
+
+	for _, raw := range lines {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			if !prevWasBlank {
+				out = append(out, "")
+			}
+			prevWasBlank = true
+			continue
+		}
+		prevWasBlank = false
+
+		fw := firstToken(trimmed)
+
+		if topLevelStarters[fw] && len(out) > 0 && prevWasTopLevel {
+			if len(out) > 0 && out[len(out)-1] != "" {
+				out = append(out, "")
+			}
+		}
+
+		if blockClosers[fw] {
+			depth--
+			if depth < 0 {
+				depth = 0
+			}
+		}
+		if blockMiddle[fw] && depth > 0 {
+			depth--
+		}
+
+		indent := strings.Repeat("  ", depth)
+		// Normalize :: spacing
+		normalized := normalizeColonColon(trimmed)
+		normalized = strings.TrimRight(normalized, " \t")
+		out = append(out, indent+normalized)
+
+		if blockOpeners[fw] {
+			depth++
+		}
+		if blockMiddle[fw] {
+			depth++
+		}
+
+		prevWasTopLevel = topLevelStarters[fw]
+	}
+
+	for len(out) > 0 && out[len(out)-1] == "" {
+		out = out[:len(out)-1]
+	}
+	return strings.Join(out, "\n") + "\n"
+}
+
+// normalizeColonColon ensures `::` is surrounded by exactly one space.
+func normalizeColonColon(line string) string {
+	parts := strings.Split(line, "::")
+	if len(parts) <= 1 {
+		return line
+	}
+	for i := range parts {
+		parts[i] = strings.TrimRight(parts[i], " \t")
+		if i > 0 {
+			parts[i] = strings.TrimLeft(parts[i], " \t")
+		}
+	}
+	return strings.Join(parts, " :: ")
+}
+
 func usage() {
 	fmt.Print(strings.TrimSpace(`
 chasm — Chasm compiler
@@ -813,11 +934,13 @@ Usage:
   chasm compile <file.chasm> [--engine raylib]   compile to C
   chasm run     <file.chasm> [--engine raylib]   compile and run
   chasm watch   <file.chasm> [--engine raylib]   watch and rerun on changes
+  chasm fmt     <file.chasm>                     format source file in-place
   chasm version                                  print version
 
 Examples:
   chasm run hello.chasm
   chasm run --engine raylib examples/game/example.chasm
+  chasm fmt myfile.chasm
 
 Environment:
   CHASM_HOME   path to the chasm repo root (auto-detected if not set)

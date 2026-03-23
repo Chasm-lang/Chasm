@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.0] — 2026-03-22 — LSP enhancements: imports, snippets, formatter, CodeLens
+
+### Added
+- **Import-aware completions** — typing `utils.` after `import "utils"` shows all public functions from that module
+- **Go-to-definition across imports** — jump to the definition in the imported file
+- **Snippets** — `tick`, `init`, `draw`, `struct`, `attr`, `fn`, `defp`, `for`, `forin`, `case`, `if`, `ifelse`, `while`, `enum`, `import`, `game` snippets in VS Code
+- **Formatter** — `chasm fmt <file>` formats source in-place; LSP `textDocument/formatting` enables format-on-save in VS Code
+- **CodeLens run button** — `▶ Run` appears above `on_tick`, `on_init`, `on_draw`, and `main`; clicking opens a terminal and runs `chasm run <file>`
+- **`chasm.runFile` VS Code command** — also accessible from the editor title bar play button
+- Extension bumped to `0.3.0`, LSP server bumped to `1.2.0`
+
 ## [1.1.0] — 2026-03-22 — Raylib runtime fixes + clean CC error output
 
 ### Summary

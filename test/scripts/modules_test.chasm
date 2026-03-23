@@ -1,6 +1,6 @@
 import "utils"
 
 def main() do
-  result :: int = utils.add(1, 2)
+  result :: int = utils.add(2, 3)
   print(result)
 end

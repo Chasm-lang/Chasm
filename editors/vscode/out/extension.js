@@ -18153,6 +18153,28 @@ function activate(context) {
     clientOptions
   );
   client.start();
+  context.subscriptions.push(
+    import_vscode.commands.registerCommand("chasm.runFile", (filePath) => {
+      const target = filePath || (import_vscode.window.activeTextEditor ? import_vscode.window.activeTextEditor.document.uri.fsPath : void 0);
+      if (!target) {
+        import_vscode.window.showErrorMessage("No Chasm file to run.");
+        return;
+      }
+      const chasmBin = config.get("chasmPath") || "chasm";
+      const terminal = import_vscode.window.createTerminal("Chasm Run");
+      terminal.show(true);
+      terminal.sendText(`${chasmBin} run "${target}"`);
+    })
+  );
+  context.subscriptions.push(
+    import_vscode.commands.registerCommand("chasm.formatFile", () => {
+      const editor = import_vscode.window.activeTextEditor;
+      if (!editor || editor.document.languageId !== "chasm") {
+        return;
+      }
+      import_vscode.commands.executeCommand("editor.action.formatDocument");
+    })
+  );
 }
 function deactivate() {
   if (!client) return void 0;
