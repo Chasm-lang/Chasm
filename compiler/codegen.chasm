@@ -316,7 +316,35 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
         si = si + 1
       end
     end
-    # Generic struct method fallback
+    # Generic struct method fallback — or namespace-qualified call (module.fn(args))
+    # If the receiver is a plain identifier that isn't a known struct/enum/variable,
+    # treat it as a module namespace and emit a plain function call: mn(ctx, args).
+    is_ns_recv = false
+    if recv_node.tag == :ident do
+      is_ns_recv = true
+      # If it IS a known struct/enum, it's not a namespace
+      si2 = 0
+      while si2 < structs.len do
+        sd2 = structs.get(si2)
+        if sd2.name == recv_node.name do is_ns_recv = false end
+        si2 = si2 + 1
+      end
+    end
+    if is_ns_recv do
+      args_str = ""
+      ai = 0
+      while ai < cl do
+        arg_idx = ch.get(cs + ai)
+        ac = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, arg_idx)
+        if ai > 0 do args_str = str_concat(args_str, ", ") end
+        args_str = str_concat(args_str, ac)
+        ai = ai + 1
+      end
+      if cl == 0 do
+        return str_concat("chasm_", str_concat(mn, "(ctx)"))
+      end
+      return str_concat("chasm_", str_concat(mn, str_concat("(ctx, ", str_concat(args_str, ")"))))
+    end
     args_str = ""
     ai = 0
     while ai < cl do

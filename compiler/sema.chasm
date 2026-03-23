@@ -557,8 +557,33 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
   end
 
   if tag == :method_call do
-    recv_t    = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, node.a)
     recv_node = pool.get(node.a)
+    # Namespace-qualified call: module.fn(args) where module is not a variable.
+    # Detect this early — before evaluating the receiver — to suppress E001.
+    # Pattern: receiver is :ident, not in symbol table, and method name resolves
+    # to a known function. In this case treat it as a plain call to `fn`.
+    is_ns_call = false
+    if recv_node.tag == :ident do
+      if sym_contains(syms, sym_len, recv_node.name) == false do
+        ns_ret_check = fnsig_lookup(fns, node.name)
+        if ns_ret_check == 0 do
+          ns_ret_check = builtin_ret(node.name)
+        end
+        if ns_ret_check != 0 do
+          is_ns_call = true
+        end
+        # Even if the function isn't found yet, treat any unknown.method() as
+        # a namespace call to suppress the spurious E001 on the module name.
+        # We'll still emit E005 below if the function truly doesn't exist.
+        if sym_contains(syms, sym_len, recv_node.name) == false do
+          is_ns_call = true
+        end
+      end
+    end
+    recv_t = 0
+    if is_ns_call == false do
+      recv_t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, node.a)
+    end
     cs = node.b
     cl = node.c
     ai = 0
@@ -596,6 +621,24 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
         ns_ret = fnsig_lookup(fns, mn)
         if ns_ret == 0 do
           ns_ret = builtin_ret(mn)
+        end
+        if ns_ret == 0 do
+          # E005: unknown function in namespace call
+          snip  = extract_snippet(src, node.line)
+          caret = make_caret(node.col, str_len(node.name))
+          fn_names :: []string = []
+          fi = 0
+          while fi < fns.len do
+            fn_names.push(fns.get(fi).name)
+            fi = fi + 1
+          end
+          suggestion = closest_match(fn_names, mn)
+          help_str = str_concat("no function named `", str_concat(mn, "` is defined"))
+          if str_len(suggestion) > 0 do
+            help_str = str_concat("did you mean `", str_concat(suggestion, "`?"))
+          end
+          d :: Diagnostic = Diagnostic{ code: "E005", category: "unknown function", file: file, line: node.line, col: node.col, message: str_concat("no function named `", str_concat(mn, "` is defined")), snippet: snip, caret: caret, help: help_str }
+          dc = diag_emit(dc, d)
         end
         types.set(idx, ns_ret)
         return ns_ret

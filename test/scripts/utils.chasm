@@ -3,5 +3,5 @@ def add(a :: int, b :: int) :: int do
 end
 
 def greet(name :: str) :: str do
-  return "hello"
+  return name
 end

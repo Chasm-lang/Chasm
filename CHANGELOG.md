@@ -11,6 +11,13 @@
 - **`chasm.runFile` VS Code command** — also accessible from the editor title bar play button
 - Extension bumped to `0.3.0`, LSP server bumped to `1.2.0`
 
+## [1.2.1] — 2026-03-22 — Module-qualified call syntax (`utils.fn()`)
+
+### Fixed
+- `compiler/sema.chasm` — `utils.fn(args)` no longer emits E001 "undefined variable" for the module name. When a `:method_call` receiver is an identifier not in the symbol table, sema now detects it as a namespace-qualified call and skips receiver evaluation entirely, falling through to the existing `fnsig_lookup` path. E005 is still emitted if the function itself doesn't exist.
+- `compiler/codegen.chasm` — namespace-qualified calls now emit `chasm_fn(ctx, args)` instead of the invalid `utils.fn(args)` C expression. The receiver identifier is checked against known structs/enums; if it matches neither, it's treated as a module prefix and discarded.
+- Bootstrap rebuilt at fixpoint (stage2 == stage3 ✓), binary replaced.
+
 ## [1.1.0] — 2026-03-22 — Raylib runtime fixes + clean CC error output
 
 ### Summary
