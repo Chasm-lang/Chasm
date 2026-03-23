@@ -1,4 +1,7 @@
-<h1>Chasm &nbsp;<img src="https://github.com/Chasm-lang/Chasm/blob/main/docs/chasm_logo.png" alt="Chasm Logo" height="64" align="middle"></h1>
+<div align="center">
+  <img src="https://github.com/Chasm-lang/Chasm/blob/main/docs/chasm_logo.png" alt="Chasm Logo" height="150">
+  <h1>Chasm</h1>
+</div>
 
 A scripting language for real-time games. Chasm compiles to C99, runs at native speed, and replaces garbage collection with a deterministic three-lifetime memory model that makes every allocation cost visible in the source code.
 
