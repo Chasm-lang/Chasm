@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.4.0] — 2026-03-24 — CI hardening and self-hosted cross-compilation
+
+### Summary
+
+CI now runs cleanly on every push using only the committed bootstrap binary — no Zig source build required. The release workflow cross-compiles all four platform binaries from the self-hosted Chasm compiler using `zig cc` as a cross-compiler, ensuring release binaries always reflect the latest language features.
+
+### Changes
+
+- **Release workflow**: builds compiler source to C via self-hosted `bootstrap/bin/chasm-macos-arm64`, then uses `zig cc` to cross-compile for macOS arm64, macOS x86_64, Linux x86_64, and Windows x86_64 in a single job
+- **CI workflow**: simplified to a single macOS arm64 job — Go tests, E2E compile, and bootstrap fixpoint using the committed binary; no Zig install required
+- **`runtime/chasm_standalone.c`**: added minimal `main()` harness for linking compiled Chasm programs as standalone executables
+- **`cmd/cli/cli.go`**: fixed bootstrap invocation — binary reads from `/tmp/sema_combined.chasm` and `/tmp/chasm_target.txt` (hardcoded paths); CLI correctly writes both before calling the bootstrap binary
+- **Fixpoint**: runs to completion (stage2 == stage3) with errors surfaced instead of silently skipped
+
+---
+
 ## [1.3.0] — 2026-03-24 — Cross-platform support (Linux, Windows, macOS Intel)
 
 ### Summary
