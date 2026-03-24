@@ -20,22 +20,22 @@ jobs:
           - runner: macos-latest
             os: macos-arm64
             bin_name: chasm-macos-arm64
-            zig_platform: macos-aarch64
+            zig_platform: aarch64-macos
 
           - runner: macos-13
             os: macos-x86_64
             bin_name: chasm-macos-x86_64
-            zig_platform: macos-x86_64
+            zig_platform: x86_64-macos
 
           - runner: ubuntu-latest
             os: linux-x86_64
             bin_name: chasm-linux-x86_64
-            zig_platform: linux-x86_64
+            zig_platform: x86_64-linux
 
           - runner: windows-latest
             os: windows-x86_64
             bin_name: chasm-windows-x86_64.exe
-            zig_platform: windows-x86_64
+            zig_platform: x86_64-windows
 
     steps:
       - uses: actions/checkout@v4
