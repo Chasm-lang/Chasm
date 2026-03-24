@@ -166,9 +166,9 @@
     },
 
     "keyword_control": {
-      "comment": "if / else / end / do / while",
+      "comment": "if / else / end / do / while / with",
       "name": "keyword.control.chasm",
-      "match": "\\b(if|else|end|do|while)\\b"
+      "match": "\\b(if|else|end|do|while|with)\\b"
     },
 
     "keyword_loop": {

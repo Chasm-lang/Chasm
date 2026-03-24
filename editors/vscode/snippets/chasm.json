@@ -2,7 +2,7 @@
   "on_tick handler": {
     "prefix": "tick",
     "body": [
-      "def on_tick() do",
+      "def on_tick(dt :: float) do",
       "  $0",
       "end"
     ],
@@ -134,6 +134,13 @@
     ],
     "description": "Enum type declaration"
   },
+  "struct update": {
+    "prefix": "with",
+    "body": [
+      "${1:base} with { ${2:field}: ${0:value} }"
+    ],
+    "description": "Struct update — copy with field overrides"
+  },
   "import statement": {
     "prefix": "import",
     "body": [
@@ -152,7 +159,7 @@
       "  $2",
       "end",
       "",
-      "def on_tick() do",
+      "def on_tick(dt :: float) do",
       "  $3",
       "end",
       "",
