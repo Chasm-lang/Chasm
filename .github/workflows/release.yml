@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  ZIG_VERSION: '0.15.2'
+
 jobs:
   build:
     name: Build (${{ matrix.os }})
@@ -22,6 +25,7 @@ jobs:
             goarch: arm64
             bin_name: chasm-macos-arm64
             archive_ext: tar.gz
+            zig_platform: macos-aarch64
 
           - runner: macos-13            # x86_64 (Intel)
             os: macos
@@ -30,6 +34,7 @@ jobs:
             goarch: amd64
             bin_name: chasm-macos-x86_64
             archive_ext: tar.gz
+            zig_platform: macos-x86_64
 
           - runner: ubuntu-latest
             os: linux
@@ -38,6 +43,7 @@ jobs:
             goarch: amd64
             bin_name: chasm-linux-x86_64
             archive_ext: tar.gz
+            zig_platform: linux-x86_64
 
           - runner: windows-latest
             os: windows
@@ -46,14 +52,30 @@ jobs:
             goarch: amd64
             bin_name: chasm-windows-x86_64.exe
             archive_ext: zip
+            zig_platform: windows-x86_64
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Zig
-        uses: mlugg/setup-zig@v1
-        with:
-          version: '0.15.2'
+      - name: Install Zig (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          ZIG_DIR="zig-${{ matrix.zig_platform }}-${ZIG_VERSION}"
+          ZIG_ARCHIVE="${ZIG_DIR}.tar.xz"
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/${ZIG_ARCHIVE}" -o "/tmp/${ZIG_ARCHIVE}"
+          tar -xJf "/tmp/${ZIG_ARCHIVE}" -C /tmp
+          echo "/tmp/${ZIG_DIR}" >> $GITHUB_PATH
+
+      - name: Install Zig (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ZigDir = "zig-${{ matrix.zig_platform }}-${env:ZIG_VERSION}"
+          $ZigArchive = "${ZigDir}.zip"
+          $Url = "https://ziglang.org/download/${env:ZIG_VERSION}/${ZigArchive}"
+          Invoke-WebRequest -Uri $Url -OutFile "$env:TEMP\${ZigArchive}" -UseBasicParsing
+          Expand-Archive -Path "$env:TEMP\${ZigArchive}" -DestinationPath "$env:TEMP"
+          echo "$env:TEMP\${ZigDir}" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build bootstrap binary (Unix)
         if: matrix.os != 'windows'
