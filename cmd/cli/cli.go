@@ -247,18 +247,22 @@ func compileChasm(path string, opts options) (string, error) {
 		fatalf("write /tmp/sema_combined.chasm: %v\n", err)
 	}
 
-	// Bootstrap binary takes the source file as an argument and writes
-	// generated C (or WAT) to stdout.
+	// Bootstrap binary reads /tmp/sema_combined.chasm and /tmp/chasm_target.txt,
+	// then writes generated C (or WAT) to stdout.
+	target := "c99"
+	if opts.targetWasm {
+		target = "wasm"
+	}
+	if err := os.WriteFile("/tmp/chasm_target.txt", []byte(target), 0644); err != nil {
+		fatalf("write /tmp/chasm_target.txt: %v\n", err)
+	}
+
 	outPath := "/tmp/chasm_out.c"
 	if opts.targetWasm {
 		outPath = "/tmp/chasm_out.wat"
 	}
 	bootstrap := bootstrapBin()
-	bArgs := []string{"/tmp/sema_combined.chasm"}
-	if opts.targetWasm {
-		bArgs = append(bArgs, "--target", "wasm")
-	}
-	cmd := exec.Command(bootstrap, bArgs...)
+	cmd := exec.Command(bootstrap)
 	outFile, err := os.Create(outPath)
 	if err != nil {
 		fatalf("create %s: %v\n", outPath, err)

@@ -37,10 +37,11 @@ jobs:
 
       - name: Compile compiler source to C
         run: |
+          echo "c99" > /tmp/chasm_target.txt
           cat compiler/lexer.chasm compiler/parser.chasm compiler/sema.chasm \
               compiler/codegen.chasm compiler/wasm.chasm compiler/main.chasm \
               > /tmp/sema_combined.chasm
-          bootstrap/bin/chasm-macos-arm64 /tmp/sema_combined.chasm > /tmp/compiler.c
+          bootstrap/bin/chasm-macos-arm64 > /tmp/compiler.c
 
       # ---- Cross-compile bootstrap binary for each platform ----------------
 
@@ -48,28 +49,27 @@ jobs:
         run: |
           mkdir -p bootstrap/bin
 
-          # macOS arm64 (native — already committed, rebuild for freshness)
+          HARNESS="runtime/chasm_standalone.c"
+
+          # macOS arm64 (native)
           clang -O2 -Wno-int-conversion \
             -o bootstrap/bin/chasm-macos-arm64 \
-            /tmp/compiler.c runtime/chasm_harness_stub.c -I runtime/ 2>/dev/null || \
-          clang -O2 -Wno-int-conversion \
-            -o bootstrap/bin/chasm-macos-arm64 \
-            /tmp/compiler.c -I runtime/
+            /tmp/compiler.c "$HARNESS" -I runtime/
 
           # macOS x86_64
           zig cc -target x86_64-macos-none -O2 -Wno-int-conversion \
             -o bootstrap/bin/chasm-macos-x86_64 \
-            /tmp/compiler.c -I runtime/ 2>/dev/null || true
+            /tmp/compiler.c "$HARNESS" -I runtime/
 
           # Linux x86_64
           zig cc -target x86_64-linux-musl -O2 -Wno-int-conversion \
             -o bootstrap/bin/chasm-linux-x86_64 \
-            /tmp/compiler.c -I runtime/ 2>/dev/null || true
+            /tmp/compiler.c "$HARNESS" -I runtime/
 
           # Windows x86_64
           zig cc -target x86_64-windows-gnu -O2 -Wno-int-conversion \
             -o bootstrap/bin/chasm-windows-x86_64.exe \
-            /tmp/compiler.c -I runtime/ 2>/dev/null || true
+            /tmp/compiler.c "$HARNESS" -I runtime/
 
           ls -la bootstrap/bin/
 
