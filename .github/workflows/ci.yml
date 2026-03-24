@@ -6,37 +6,10 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  ZIG_VERSION: '0.15.2'
-
 jobs:
   test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-latest
-            os: macos-arm64
-            bin_name: chasm-macos-arm64
-            zig_platform: aarch64-macos
-
-          - runner: macos-13
-            os: macos-x86_64
-            bin_name: chasm-macos-x86_64
-            zig_platform: x86_64-macos
-
-          - runner: ubuntu-latest
-            os: linux-x86_64
-            bin_name: chasm-linux-x86_64
-            zig_platform: x86_64-linux
-
-          - runner: windows-latest
-            os: windows-x86_64
-            bin_name: chasm-windows-x86_64.exe
-            zig_platform: x86_64-windows
-
+    name: Test
+    runs-on: macos-latest   # arm64 — authoritative platform (has committed binary)
     steps:
       - uses: actions/checkout@v4
 
@@ -46,85 +19,42 @@ jobs:
           go-version: '1.22'
           cache: true
 
-      # ---- Install Zig directly from ziglang.org/download --------------------
-
-      - name: Install Zig (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          ZIG_DIR="zig-${{ matrix.zig_platform }}-${ZIG_VERSION}"
-          ZIG_ARCHIVE="${ZIG_DIR}.tar.xz"
-          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/${ZIG_ARCHIVE}" -o "/tmp/${ZIG_ARCHIVE}"
-          tar -xJf "/tmp/${ZIG_ARCHIVE}" -C /tmp
-          echo "/tmp/${ZIG_DIR}" >> $GITHUB_PATH
-
-      - name: Install Zig (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ZigDir = "zig-${{ matrix.zig_platform }}-${env:ZIG_VERSION}"
-          $ZigArchive = "${ZigDir}.zip"
-          $Url = "https://ziglang.org/download/${env:ZIG_VERSION}/${ZigArchive}"
-          Invoke-WebRequest -Uri $Url -OutFile "$env:TEMP\${ZigArchive}" -UseBasicParsing
-          Expand-Archive -Path "$env:TEMP\${ZigArchive}" -DestinationPath "$env:TEMP"
-          echo "$env:TEMP\${ZigDir}" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      # ---- Build bootstrap binary from Zig source ---------------------------
-
-      - name: Build bootstrap binary (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          cd archive/zig-compiler
-          zig build -Doptimize=ReleaseFast
-          cp zig-out/bin/chasm ../../bootstrap/bin/${{ matrix.bin_name }}
-          chmod +x ../../bootstrap/bin/${{ matrix.bin_name }}
-
-      - name: Build bootstrap binary (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          cd archive/zig-compiler
-          zig build -Doptimize=ReleaseFast
-          cp zig-out/bin/chasm.exe ../../bootstrap/bin/${{ matrix.bin_name }}
-
-      # ---- Go unit + property-based tests -----------------------------------
+      # ---- Go unit tests ---------------------------------------------------
 
       - name: Go tests
         run: go test ./cmd/cli/... -v -timeout 120s
 
-      # ---- End-to-end: compile hello world ----------------------------------
+      # ---- End-to-end: compile hello world ---------------------------------
 
       - name: Build CLI
         run: go build -ldflags "-X main.defaultChasmHome=${{ github.workspace }}" -o chasm-test ./cmd/cli
 
-      - name: E2E — compile hello world (Unix)
-        if: runner.os != 'Windows'
+      - name: E2E — compile hello world
         run: ./chasm-test compile examples/hello_world.chasm
 
-      - name: E2E — compile hello world (Windows)
-        if: runner.os == 'Windows'
-        run: .\chasm-test.exe compile examples\hello_world.chasm
-
-      # ---- Bootstrap fixpoint (macOS arm64 only — authoritative platform) ---
+      # ---- Bootstrap fixpoint ----------------------------------------------
 
       - name: Bootstrap fixpoint
-        if: matrix.os == 'macos-arm64'
         run: |
-          echo "c99" > /tmp/chasm_target.txt
           cat compiler/lexer.chasm compiler/parser.chasm compiler/sema.chasm \
               compiler/codegen.chasm compiler/wasm.chasm compiler/main.chasm \
               > /tmp/sema_combined.chasm
 
-          bootstrap/bin/chasm-macos-arm64 /tmp/sema_combined.chasm > /tmp/stage1.c
-          clang -O2 -Wno-int-conversion -o /tmp/stage1_bin /tmp/stage1.c runtime/chasm_harness_stub.c -I runtime/ 2>/dev/null || \
-          clang -O2 -Wno-int-conversion -o /tmp/stage1_bin /tmp/stage1.c -I runtime/ 2>/dev/null || true
+          bootstrap/bin/chasm-macos-arm64 /tmp/sema_combined.chasm
+          clang -O2 -Wno-int-conversion -o /tmp/stage1_bin /tmp/sema_combined.c runtime/chasm_harness_stub.c -I runtime/ 2>/dev/null || \
+          clang -O2 -Wno-int-conversion -o /tmp/stage1_bin /tmp/sema_combined.c -I runtime/ 2>/dev/null || true
 
           if [ -f /tmp/stage1_bin ]; then
-            /tmp/stage1_bin /tmp/sema_combined.chasm > /tmp/stage2.c
-            clang -O2 -Wno-int-conversion -o /tmp/stage2_bin /tmp/stage2.c -I runtime/ 2>/dev/null || true
+            /tmp/stage1_bin /tmp/sema_combined.chasm
+            mv /tmp/sema_combined.c /tmp/stage1.c
+            clang -O2 -Wno-int-conversion -o /tmp/stage2_bin /tmp/stage1.c -I runtime/ 2>/dev/null || true
           fi
 
           if [ -f /tmp/stage2_bin ]; then
-            /tmp/stage2_bin /tmp/sema_combined.chasm > /tmp/stage3.c
-            diff /tmp/stage2.c /tmp/stage3.c && echo "✓ FIXPOINT" || (echo "✗ FIXPOINT FAILED" && exit 1)
+            /tmp/stage2_bin /tmp/sema_combined.chasm
+            mv /tmp/sema_combined.c /tmp/stage2.c
+            /tmp/stage2_bin /tmp/sema_combined.chasm
+            diff /tmp/stage2.c /tmp/sema_combined.c && echo "✓ FIXPOINT" || (echo "✗ FIXPOINT FAILED" && exit 1)
           else
             echo "Skipping fixpoint (stage binary did not link)"
           fi

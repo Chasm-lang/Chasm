@@ -13,149 +13,116 @@ env:
 
 jobs:
   build:
-    name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - runner: macos-latest        # arm64
-            os: macos
-            arch: arm64
-            goos: darwin
-            goarch: arm64
-            bin_name: chasm-macos-arm64
-            archive_ext: tar.gz
-            zig_platform: aarch64-macos
-
-          - runner: macos-13            # x86_64 (Intel)
-            os: macos
-            arch: x86_64
-            goos: darwin
-            goarch: amd64
-            bin_name: chasm-macos-x86_64
-            archive_ext: tar.gz
-            zig_platform: x86_64-macos
-
-          - runner: ubuntu-latest
-            os: linux
-            arch: x86_64
-            goos: linux
-            goarch: amd64
-            bin_name: chasm-linux-x86_64
-            archive_ext: tar.gz
-            zig_platform: x86_64-linux
-
-          - runner: windows-latest
-            os: windows
-            arch: x86_64
-            goos: windows
-            goarch: amd64
-            bin_name: chasm-windows-x86_64.exe
-            archive_ext: zip
-            zig_platform: x86_64-windows
+    name: Build all platforms
+    runs-on: macos-latest   # arm64 — has the authoritative bootstrap binary
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Zig (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          ZIG_DIR="zig-${{ matrix.zig_platform }}-${ZIG_VERSION}"
-          ZIG_ARCHIVE="${ZIG_DIR}.tar.xz"
-          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/${ZIG_ARCHIVE}" -o "/tmp/${ZIG_ARCHIVE}"
-          tar -xJf "/tmp/${ZIG_ARCHIVE}" -C /tmp
-          echo "/tmp/${ZIG_DIR}" >> $GITHUB_PATH
-
-      - name: Install Zig (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ZigDir = "zig-${{ matrix.zig_platform }}-${env:ZIG_VERSION}"
-          $ZigArchive = "${ZigDir}.zip"
-          $Url = "https://ziglang.org/download/${env:ZIG_VERSION}/${ZigArchive}"
-          Invoke-WebRequest -Uri $Url -OutFile "$env:TEMP\${ZigArchive}" -UseBasicParsing
-          Expand-Archive -Path "$env:TEMP\${ZigArchive}" -DestinationPath "$env:TEMP"
-          echo "$env:TEMP\${ZigDir}" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Build bootstrap binary (Unix)
-        if: matrix.os != 'windows'
-        run: |
-          cd archive/zig-compiler
-          zig build -Doptimize=ReleaseFast
-          cp zig-out/bin/chasm ../../bootstrap/bin/${{ matrix.bin_name }}
-          chmod +x ../../bootstrap/bin/${{ matrix.bin_name }}
-
-      - name: Build bootstrap binary (Windows)
-        if: matrix.os == 'windows'
-        run: |
-          cd archive/zig-compiler
-          zig build -Doptimize=ReleaseFast
-          cp zig-out/bin/chasm.exe ../../bootstrap/bin/${{ matrix.bin_name }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
 
-      - name: Build CLI (Unix)
-        if: matrix.os != 'windows'
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          go build \
-            -ldflags "-X main.defaultChasmHome=" \
-            -o bin/chasm \
-            ./cmd/cli
+      # ---- Install Zig (used only as a cross-compiler, not for zig build) --
 
-      - name: Build CLI (Windows)
-        if: matrix.os == 'windows'
-        env:
-          GOOS: windows
-          GOARCH: amd64
+      - name: Install Zig
         run: |
-          go build `
-            -ldflags "-X main.defaultChasmHome=" `
-            -o bin/chasm.exe `
-            ./cmd/cli
+          ZIG_DIR="zig-aarch64-macos-${ZIG_VERSION}"
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/${ZIG_DIR}.tar.xz" -o /tmp/zig.tar.xz
+          tar -xJf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/${ZIG_DIR}" >> $GITHUB_PATH
 
-      - name: Package (tar.gz)
-        if: matrix.archive_ext == 'tar.gz'
+      # ---- Compile the Chasm compiler source → C using self-hosted binary --
+
+      - name: Compile compiler source to C
+        run: |
+          cat compiler/lexer.chasm compiler/parser.chasm compiler/sema.chasm \
+              compiler/codegen.chasm compiler/wasm.chasm compiler/main.chasm \
+              > /tmp/sema_combined.chasm
+          bootstrap/bin/chasm-macos-arm64 /tmp/sema_combined.chasm
+          # output is /tmp/sema_combined.c
+
+      # ---- Cross-compile bootstrap binary for each platform ----------------
+
+      - name: Cross-compile bootstrap binaries
+        run: |
+          mkdir -p bootstrap/bin
+
+          # macOS arm64 (native — already committed, rebuild for freshness)
+          clang -O2 -Wno-int-conversion \
+            -o bootstrap/bin/chasm-macos-arm64 \
+            /tmp/sema_combined.c runtime/chasm_harness_stub.c -I runtime/ 2>/dev/null || \
+          clang -O2 -Wno-int-conversion \
+            -o bootstrap/bin/chasm-macos-arm64 \
+            /tmp/sema_combined.c -I runtime/
+
+          # macOS x86_64
+          zig cc -target x86_64-macos-none -O2 -Wno-int-conversion \
+            -o bootstrap/bin/chasm-macos-x86_64 \
+            /tmp/sema_combined.c -I runtime/ 2>/dev/null || true
+
+          # Linux x86_64
+          zig cc -target x86_64-linux-musl -O2 -Wno-int-conversion \
+            -o bootstrap/bin/chasm-linux-x86_64 \
+            /tmp/sema_combined.c -I runtime/ 2>/dev/null || true
+
+          # Windows x86_64
+          zig cc -target x86_64-windows-gnu -O2 -Wno-int-conversion \
+            -o bootstrap/bin/chasm-windows-x86_64.exe \
+            /tmp/sema_combined.c -I runtime/ 2>/dev/null || true
+
+          ls -la bootstrap/bin/
+
+      # ---- Build Go CLI for each platform ----------------------------------
+
+      - name: Build CLI binaries
+        run: |
+          mkdir -p bin
+
+          GOOS=darwin  GOARCH=arm64 go build -ldflags "-X main.defaultChasmHome=" -o bin/chasm-macos-arm64       ./cmd/cli
+          GOOS=darwin  GOARCH=amd64 go build -ldflags "-X main.defaultChasmHome=" -o bin/chasm-macos-x86_64     ./cmd/cli
+          GOOS=linux   GOARCH=amd64 go build -ldflags "-X main.defaultChasmHome=" -o bin/chasm-linux-x86_64     ./cmd/cli
+          GOOS=windows GOARCH=amd64 go build -ldflags "-X main.defaultChasmHome=" -o bin/chasm-windows-x86_64.exe ./cmd/cli
+
+      # ---- Package archives ------------------------------------------------
+
+      - name: Package archives
         run: |
           TAG=${{ github.ref_name }}
-          NAME=chasm-${TAG}-${{ matrix.os }}-${{ matrix.arch }}
-          mkdir -p dist/${NAME}/bootstrap/bin
-          cp bin/chasm                              dist/${NAME}/bin/chasm
-          cp bootstrap/bin/${{ matrix.bin_name }}  dist/${NAME}/bootstrap/bin/${{ matrix.bin_name }}
-          cp -r runtime                             dist/${NAME}/runtime
-          cp -r engine                              dist/${NAME}/engine
-          cp -r stdlib                              dist/${NAME}/stdlib 2>/dev/null || true
-          cp -r examples                            dist/${NAME}/examples
-          tar -czf dist/${NAME}.tar.gz -C dist ${NAME}
-          echo "ASSET=dist/${NAME}.tar.gz" >> $GITHUB_ENV
-          echo "ASSET_NAME=${NAME}.tar.gz" >> $GITHUB_ENV
 
-      - name: Package (zip)
-        if: matrix.archive_ext == 'zip'
-        shell: pwsh
-        run: |
-          $TAG = "${{ github.ref_name }}"
-          $NAME = "chasm-${TAG}-${{ matrix.os }}-${{ matrix.arch }}"
-          New-Item -ItemType Directory -Path "dist/${NAME}/bootstrap/bin" -Force
-          New-Item -ItemType Directory -Path "dist/${NAME}/bin" -Force
-          Copy-Item "bin/chasm.exe"                             "dist/${NAME}/bin/chasm.exe"
-          Copy-Item "bootstrap/bin/${{ matrix.bin_name }}"     "dist/${NAME}/bootstrap/bin/${{ matrix.bin_name }}"
-          Copy-Item "runtime"                                   "dist/${NAME}/runtime" -Recurse
-          Copy-Item "engine"                                    "dist/${NAME}/engine" -Recurse
-          if (Test-Path "stdlib") { Copy-Item "stdlib" "dist/${NAME}/stdlib" -Recurse }
-          Copy-Item "examples"                                  "dist/${NAME}/examples" -Recurse
-          Compress-Archive -Path "dist/${NAME}" -DestinationPath "dist/${NAME}.zip"
-          echo "ASSET=dist/${NAME}.zip" >> $env:GITHUB_ENV
-          echo "ASSET_NAME=${NAME}.zip" >> $env:GITHUB_ENV
+          for PLATFORM in macos-arm64 macos-x86_64 linux-x86_64; do
+            NAME="chasm-${TAG}-${PLATFORM}"
+            mkdir -p "dist/${NAME}/bin"
+            mkdir -p "dist/${NAME}/bootstrap/bin"
+            cp "bin/chasm-${PLATFORM}"                    "dist/${NAME}/bin/chasm"
+            cp "bootstrap/bin/chasm-${PLATFORM}"          "dist/${NAME}/bootstrap/bin/chasm-${PLATFORM}" 2>/dev/null || true
+            cp -r runtime                                  "dist/${NAME}/runtime"
+            cp -r engine                                   "dist/${NAME}/engine"
+            cp -r examples                                 "dist/${NAME}/examples"
+            cp -r stdlib                                   "dist/${NAME}/stdlib" 2>/dev/null || true
+            tar -czf "dist/${NAME}.tar.gz" -C dist "${NAME}"
+          done
 
-      - name: Upload release asset
+          # Windows zip
+          NAME="chasm-${TAG}-windows-x86_64"
+          mkdir -p "dist/${NAME}/bin"
+          mkdir -p "dist/${NAME}/bootstrap/bin"
+          cp "bin/chasm-windows-x86_64.exe"                      "dist/${NAME}/bin/chasm.exe"
+          cp "bootstrap/bin/chasm-windows-x86_64.exe"            "dist/${NAME}/bootstrap/bin/chasm-windows-x86_64.exe" 2>/dev/null || true
+          cp -r runtime                                           "dist/${NAME}/runtime"
+          cp -r engine                                            "dist/${NAME}/engine"
+          cp -r examples                                          "dist/${NAME}/examples"
+          cp -r stdlib                                            "dist/${NAME}/stdlib" 2>/dev/null || true
+          cd dist && zip -r "${NAME}.zip" "${NAME}" && cd ..
+
+      # ---- Upload all assets to the GitHub release -------------------------
+
+      - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ASSET }}
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
           draft: false
           generate_release_notes: true
