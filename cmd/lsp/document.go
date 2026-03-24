@@ -174,9 +174,9 @@ func (d *document) complete(pos Position) []CompletionItem {
 	}
 	prefix := line[:col]
 
-	// After '.' — check if it's an import alias (e.g. "utils.") or generic method
-	if dotTrigger(prefix) {
-		alias := dotAlias(prefix)
+	// After '.' or 'alias.partial' — dot-based member access.
+	// Handles both the exact trigger (ends with '.') and continued typing after dot.
+	if alias, ok := dotContextAlias(prefix); ok {
 		if alias != "" && d.parsed != nil {
 			for _, imp := range d.parsed.imports {
 				if imp.alias == alias {
@@ -282,6 +282,27 @@ func dotAlias(prefix string) string {
 func dotTrigger(prefix string) bool {
 	trimmed := strings.TrimRight(prefix, " \t")
 	return len(trimmed) > 0 && trimmed[len(trimmed)-1] == '.'
+}
+
+// dotContextAlias returns the identifier before the dot when the prefix is in a
+// dot-completion context — either ending with '.' (e.g. "@enemies.") or with
+// 'alias.partial' (e.g. "@enemies.se" typed after the initial trigger).
+// Returns ("", false) when no dot context is detected.
+func dotContextAlias(prefix string) (string, bool) {
+	trimmed := strings.TrimRight(prefix, " \t")
+	if len(trimmed) == 0 {
+		return "", false
+	}
+	// Strip trailing ident chars (partial method name typed after dot)
+	end := len(trimmed)
+	for end > 0 && isIdentChar(rune(trimmed[end-1])) {
+		end--
+	}
+	// Must have a '.' immediately before what we stripped
+	if end == 0 || trimmed[end-1] != '.' {
+		return "", false
+	}
+	return dotAlias(trimmed[:end]), true
 }
 
 func atTrigger(prefix string) bool {
