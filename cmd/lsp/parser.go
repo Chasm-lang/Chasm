@@ -465,14 +465,17 @@ func (ts *tokenStream) skipUntil(keywords ...string) {
 	}
 }
 
-func (ts *tokenStream) skipBlock() {
-	// Skip until matching 'end', counting nested do/end pairs
+func (ts *tokenStream) skipBlock() int {
+	// Skip until matching 'end', counting nested do/end pairs.
+	// Returns the line number of the closing 'end' token (or last token on EOF).
 	depth := 1
+	lastLine := 0
 	for depth > 0 {
 		t := ts.consume()
 		if t.kind == tokEOF {
-			return
+			return lastLine
 		}
+		lastLine = t.line
 		if t.kind == tokIdent {
 			switch t.text {
 			case "do", "defstruct":
@@ -482,6 +485,7 @@ func (ts *tokenStream) skipBlock() {
 			}
 		}
 	}
+	return lastLine
 }
 
 // ---------------------------------------------------------------------------
@@ -640,19 +644,18 @@ func parseFn(ts *tokenStream, pr *parseResult, lines []string) {
 	doc := extractDocComment(lines, kw.line)
 
 	// Skip body
-	bodyStart := ts.peek()
+	endLine := kw.line
 	if ts.peek().kind == tokIdent && ts.peek().text == "do" {
 		ts.consume()
-		ts.skipBlock()
+		endLine = ts.skipBlock()
 	}
-	bodyEnd := ts.peek()
 
 	fn := &fnInfo{
 		name:      name,
 		sig:       strings.Join(sigParts, ""),
 		doc:       doc,
 		defRange:  defRange,
-		bodyRange: rangeFromLines(kw.line, bodyStart.line, bodyEnd.line),
+		bodyRange: rangeFromLines(kw.line, kw.line, endLine),
 		isPrivate: isPrivate,
 		params:    params,
 		retType:   retType,
@@ -967,8 +970,11 @@ func tokenRange(t token) Range {
 }
 
 func rangeFromLines(defLine, startLine, endLine int) Range {
+	if endLine < defLine {
+		endLine = defLine
+	}
 	return Range{
-		Start: Position{startLine, 0},
+		Start: Position{defLine, 0},
 		End:   Position{endLine, 999},
 	}
 }
