@@ -3,7 +3,7 @@
 // Implements: compile, run, watch, version.
 // Compilation pipeline:
 //  1. Write source (+ optional prelude) to /tmp/sema_combined.chasm
-//  2. Run the bootstrap binary → /tmp/chasm_out.c, /tmp/chasm_rt.h
+//  2. Run the bootstrap binary on /tmp/sema_combined.chasm → /tmp/sema_combined.c, /tmp/chasm_rt.h
 //  3. cc-compile with the appropriate harness
 //  4. exec (for run/watch)
 package main
@@ -220,9 +220,9 @@ func runWatchLegacy(path string, opts options) {
 // ---------------------------------------------------------------------------
 
 // compileChasm runs the bootstrap binary on path and returns the path to the
-// generated /tmp/chasm_out.c. Calls fatalf on unrecoverable errors (missing
-// bootstrap binary, missing source file). Returns an error if the bootstrap
-// compiler itself fails (e.g. syntax error in source) so callers can handle it.
+// generated /tmp/sema_combined.c (or .wat). Calls fatalf on unrecoverable errors
+// (missing bootstrap binary, missing source file). Returns an error if the
+// bootstrap compiler itself fails (e.g. syntax error in source).
 func compileChasm(path string, opts options) (string, error) {
 	home := chasmHome()
 	visited := map[string]bool{}
@@ -247,27 +247,23 @@ func compileChasm(path string, opts options) (string, error) {
 		fatalf("write /tmp/sema_combined.chasm: %v\n", err)
 	}
 
-	// Write target hint for the compiler driver.
-	target := "c99"
-	if opts.targetWasm {
-		target = "wasm"
-	}
-	if err := os.WriteFile("/tmp/chasm_target.txt", []byte(target), 0644); err != nil {
-		fatalf("write /tmp/chasm_target.txt: %v\n", err)
-	}
-
+	// Bootstrap binary takes the source file as an argument and writes the
+	// output to /tmp/sema_combined.c (or .wat for wasm).
 	bootstrap := bootstrapBin()
-	cmd := exec.Command(bootstrap)
-	// Bootstrap binary writes generated C to stdout; capture it.
-	outFile, err := os.Create("/tmp/chasm_out.c")
-	if err != nil {
-		fatalf("create /tmp/chasm_out.c: %v\n", err)
+	bArgs := []string{"/tmp/sema_combined.chasm"}
+	if opts.targetWasm {
+		bArgs = append(bArgs, "--target", "wasm")
 	}
-	defer outFile.Close()
-	cmd.Stdout = outFile
+	cmd := exec.Command(bootstrap, bArgs...)
+	cmd.Stdout = os.Stdout // informational messages (e.g. "output → ...")
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("bootstrap compiler: %w", err)
+	}
+
+	outPath := "/tmp/sema_combined.c"
+	if opts.targetWasm {
+		outPath = "/tmp/sema_combined.wat"
 	}
 
 	// Always write the runtime header from the repo (keeps it up to date).
@@ -276,7 +272,7 @@ func compileChasm(path string, opts options) (string, error) {
 		fmt.Fprintf(os.Stderr, "warning: could not copy chasm_rt.h: %v\n", err)
 	}
 
-	return "/tmp/chasm_out.c", nil
+	return outPath, nil
 }
 
 // buildAndRun compiles and executes the result.
@@ -751,10 +747,10 @@ func fatalf(format string, args ...any) {
 }
 
 // filterCCErrors captures cc stderr and reformats clang-style diagnostics into
-// clean Chasm-style output. Lines referencing /tmp/chasm_out.c are translated
+// clean Chasm-style output. Lines referencing /tmp/sema_combined.c are translated
 // to hide the internal path; other lines pass through unchanged.
 //
-// Format in:  /tmp/chasm_out.c:114:26: error: redefinition of 'foo'
+// Format in:  /tmp/sema_combined.c:114:26: error: redefinition of 'foo'
 // Format out:
 //
 //	error[CC]: redefinition of 'foo'
@@ -767,7 +763,7 @@ func filterCCErrors(raw []byte, chasmSrc string) {
 		}
 		// Try to match clang's  file:line:col: severity: message  pattern.
 		// We only reformat lines that reference our temp file.
-		if strings.HasPrefix(line, "/tmp/chasm_out.c:") || strings.HasPrefix(line, "/tmp/chasm_script_") {
+		if strings.HasPrefix(line, "/tmp/sema_combined.c:") || strings.HasPrefix(line, "/tmp/chasm_script_") {
 			// Strip the file prefix: split on first 3 colons.
 			rest := line
 			// Remove the file path prefix up to and including the first ':'
