@@ -601,6 +601,9 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
       if recv_node.tag == :ident do
         elem_t = sym_elem_lookup(syms, sym_len, recv_node.name)
       end
+      if recv_node.tag == :at_ref do
+        elem_t = sym_elem_lookup(syms, sym_len, recv_node.name)
+      end
       types.set(idx, elem_t)
       return elem_t
     end
@@ -999,7 +1002,20 @@ defp sema_all(pool :: []Node, ch :: []int, root :: int,
     if decl.tag == :at_decl do
       init_idx = decl.a
       init_t   = sema_expr(pool, ch, types, syms, attr_sym_len, fns, structs, fields, dc, src, file, init_idx)
-      attr_sym_len = sym_push(syms, attr_sym_len, decl.name, init_t, 0)
+      # Extract array element type for array_fixed(@attr) — needed for typed .get()/.set()
+      elem_t = 0
+      if init_t == 7 do
+        init_nd = pool.get(init_idx)
+        if init_nd.tag == :call do
+          if init_nd.name == "array_fixed" do
+            if init_nd.b >= 2 do
+              def_child_idx = ch.get(init_nd.a + 1)
+              elem_t = types.get(def_child_idx)
+            end
+          end
+        end
+      end
+      attr_sym_len = sym_push(syms, attr_sym_len, decl.name, init_t, elem_t)
       ai :: AttrInfo = AttrInfo{ name: decl.name, lifetime: decl.b, type_id: init_t, line: decl.line }
       attrs.push(ai)
     end

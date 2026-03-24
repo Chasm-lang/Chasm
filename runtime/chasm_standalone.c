@@ -6,6 +6,9 @@
  */
 #include "chasm_rt.h"
 
+/* chasm_module_init is only emitted for scripts that have @attr declarations.
+ * Declare it as a weak symbol so the harness links cleanly when it is absent. */
+__attribute__((weak)) void chasm_module_init(ChasmCtx *ctx) { (void)ctx; }
 void chasm_main(ChasmCtx *ctx);
 
 int main(void) {
@@ -17,6 +20,7 @@ int main(void) {
         .script     = { script_buf,  0, sizeof(script_buf)  },
         .persistent = { persist_buf, 0, sizeof(persist_buf) },
     };
+    chasm_module_init(&ctx);
     chasm_main(&ctx);
     return 0;
 }

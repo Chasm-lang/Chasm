@@ -758,6 +758,13 @@ defp emit_array_helpers(sn :: string) do
   print(str_concat("    if (a->len >= a->cap) { a->cap = a->cap * 2 + 8; a->data = realloc(a->data, (size_t)a->cap * sizeof(", str_concat(sn, ")); }")))
   print(str_concat("    if (a->data) ((", str_concat(sn, "*)a->data)[a->len++] = v;")))
   print("}")
+  print(str_concat("static inline ChasmArray chasm_array_fixed_init_", str_concat(sn, str_concat("(ChasmArena *arena, int64_t cap, ", str_concat(sn, " def) {")))))
+  print("    if (cap <= 0) cap = 8;")
+  print(str_concat("    void *d = chasm_alloc(arena, (size_t)cap * sizeof(", str_concat(sn, str_concat("), _Alignof(", str_concat(sn, "));")))))
+  print("    if (!d) return (ChasmArray){NULL, 0, cap};")
+  print(str_concat("    ", str_concat(sn, str_concat(" *p = (", str_concat(sn, "*)d; for (int64_t _i = 0; _i < cap; _i++) p[_i] = def;")))))
+  print("    return (ChasmArray){d, cap, cap};")
+  print("}")
   print("")
 end
 
@@ -1021,12 +1028,13 @@ defp emit_fn(pool :: []Node, ch :: []int, types :: []int,
         if rinit_node.tag == :call do
           if rinit_node.name == "array_fixed" do
             rattr_name = str_slice(rdecl.name, 1, str_len(rdecl.name))
-            # Detect float vs int from default value arg (2nd arg if present)
+            # Detect elem type from default value arg (2nd arg if present)
             fixed_elem_tid = -2
             if rinit_node.b >= 2 do
               def_arg_idx = ch.get(rinit_node.a + 1)
               def_arg_t   = types.get(def_arg_idx)
               if def_arg_t == 2 do fixed_elem_tid = -3 end
+              if def_arg_t > 9 do fixed_elem_tid = def_arg_t end
             end
             ve_len = ve_push(var_elems, ve_len, rattr_name, fixed_elem_tid)
           end
@@ -1187,11 +1195,12 @@ defp codegen(pool :: []Node, ch :: []int, root :: int,
           if init_node.tag == :call do
             if init_node.name == "array_fixed" do
               is_fixed = true
-              # Detect float default from 2nd arg
+              # Detect elem type from 2nd arg: float=-3, struct=tid, int=-2
               if init_node.b >= 2 do
                 def_arg_idx = ch.get(init_node.a + 1)
                 def_arg_t   = types.get(def_arg_idx)
                 if def_arg_t == 2 do fixed_elem_tid = -3 end
+                if def_arg_t > 9 do fixed_elem_tid = def_arg_t end
                 default_c   = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, def_arg_idx)
                 has_default = true
               end
@@ -1205,17 +1214,24 @@ defp codegen(pool :: []Node, ch :: []int, root :: int,
           if decl.b == 1 do arena_expr = "&ctx->frame" end
           if decl.b == 3 do arena_expr = "&ctx->persistent" end
           if is_fixed do
-            if fixed_elem_tid == -3 do
-              print(str_concat("  g_", str_concat(attr_name, str_concat(" = chasm_array_fixed_in_f(", str_concat(arena_expr, str_concat(", ", str_concat(cap_c, ");")))))))
+            if fixed_elem_tid > 9 do
+              # Struct array — typed init handles allocation size and default seeding
+              sn_fixed = struct_name_by_tid(structs, fixed_elem_tid)
+              print(str_concat("  g_", str_concat(attr_name, str_concat(" = chasm_array_fixed_init_", str_concat(sn_fixed, str_concat("(", str_concat(arena_expr, str_concat(", ", str_concat(cap_c, str_concat(", ", str_concat(default_c, ");")))))))))))
             else
-              print(str_concat("  g_", str_concat(attr_name, str_concat(" = chasm_array_fixed_in(", str_concat(arena_expr, str_concat(", ", str_concat(cap_c, ");")))))))
+              if fixed_elem_tid == -3 do
+                print(str_concat("  g_", str_concat(attr_name, str_concat(" = chasm_array_fixed_in_f(", str_concat(arena_expr, str_concat(", ", str_concat(cap_c, ");")))))))
+              else
+                print(str_concat("  g_", str_concat(attr_name, str_concat(" = chasm_array_fixed_in(", str_concat(arena_expr, str_concat(", ", str_concat(cap_c, ");")))))))
+              end
             end
             ve_len = ve_push(var_elems, ve_len, attr_name, fixed_elem_tid)
-            # Seed all slots with default value if provided
+            # Seed primitive slots with default value if provided (structs handled above)
             if has_default do
               if fixed_elem_tid == -3 do
                 print(str_concat("  { int64_t _cap = ", str_concat(cap_c, str_concat("; for (int64_t _di = 0; _di < _cap; _di++) ((double*)g_", str_concat(attr_name, str_concat(".data)[_di] = ", str_concat(default_c, str_concat("; } g_", str_concat(attr_name, str_concat(".len = ", str_concat(cap_c, ";")))))))))))
-              else
+              end
+              if fixed_elem_tid == -2 do
                 print(str_concat("  { int64_t _cap = ", str_concat(cap_c, str_concat("; for (int64_t _di = 0; _di < _cap; _di++) ((int64_t*)g_", str_concat(attr_name, str_concat(".data)[_di] = ", str_concat(default_c, str_concat("; } g_", str_concat(attr_name, str_concat(".len = ", str_concat(cap_c, ";")))))))))))
               end
             end
