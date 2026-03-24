@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.5.0] — 2026-03-24 — Struct arrays, struct update syntax, LSP fixes
+
+### Summary
+
+Typed struct arrays now work correctly with full C type safety. Introduces `expr with { field: val }` struct update syntax. LSP fixes for `selectionRange` and dot completions.
+
+### Changes
+
+- **feat**: `array_fixed(n, StructName{...})` generates typed C helpers (`chasm_array_get_T`, `chasm_array_set_T`) — fixes type errors when using struct arrays
+- **feat**: struct update syntax — `e with { x: new_x }` copies base struct and overrides listed fields
+- **fix(lsp)**: `selectionRange must be contained in fullRange` error on `textDocument/documentSymbol`
+- **fix(lsp)**: method completions (`.set`, `.get`, etc.) now persist while typing after the dot
+- **fix(lsp)**: `with` added as keyword for highlighting and completions
+- **fix**: `on_tick(dt :: float)` signature corrected in VS Code snippets
+
 ## [1.4.0] — 2026-03-24 — CI hardening and self-hosted cross-compilation
 
 ### Summary

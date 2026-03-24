@@ -39,7 +39,7 @@ jobs:
         run: |
           echo "c99" > /tmp/chasm_target.txt
           cat compiler/lexer.chasm compiler/parser.chasm compiler/sema.chasm \
-              compiler/codegen.chasm compiler/wasm.chasm compiler/main.chasm \
+              compiler/wasm.chasm compiler/codegen.chasm compiler/main.chasm \
               > /tmp/sema_combined.chasm
           bootstrap/bin/chasm-macos-arm64 > /tmp/compiler.c
 
