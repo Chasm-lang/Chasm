@@ -73,16 +73,21 @@ jobs:
 
           ls -la bootstrap/bin/
 
-      # ---- Build Go CLI for each platform ----------------------------------
+      # ---- Build Go CLI and LSP for each platform --------------------------
 
-      - name: Build CLI binaries
+      - name: Build CLI and LSP binaries
         run: |
           mkdir -p bin
 
-          GOOS=darwin  GOARCH=arm64 go build -ldflags "-X main.defaultChasmHome=" -o bin/chasm-macos-arm64       ./cmd/cli
-          GOOS=darwin  GOARCH=amd64 go build -ldflags "-X main.defaultChasmHome=" -o bin/chasm-macos-x86_64     ./cmd/cli
-          GOOS=linux   GOARCH=amd64 go build -ldflags "-X main.defaultChasmHome=" -o bin/chasm-linux-x86_64     ./cmd/cli
+          GOOS=darwin  GOARCH=arm64 go build -ldflags "-X main.defaultChasmHome=" -o bin/chasm-macos-arm64         ./cmd/cli
+          GOOS=darwin  GOARCH=amd64 go build -ldflags "-X main.defaultChasmHome=" -o bin/chasm-macos-x86_64       ./cmd/cli
+          GOOS=linux   GOARCH=amd64 go build -ldflags "-X main.defaultChasmHome=" -o bin/chasm-linux-x86_64       ./cmd/cli
           GOOS=windows GOARCH=amd64 go build -ldflags "-X main.defaultChasmHome=" -o bin/chasm-windows-x86_64.exe ./cmd/cli
+
+          GOOS=darwin  GOARCH=arm64 go build -o bin/chasm-lsp-macos-arm64         ./cmd/lsp
+          GOOS=darwin  GOARCH=amd64 go build -o bin/chasm-lsp-macos-x86_64       ./cmd/lsp
+          GOOS=linux   GOARCH=amd64 go build -o bin/chasm-lsp-linux-x86_64       ./cmd/lsp
+          GOOS=windows GOARCH=amd64 go build -o bin/chasm-lsp-windows-x86_64.exe ./cmd/lsp
 
       # ---- Package archives ------------------------------------------------
 
@@ -95,6 +100,7 @@ jobs:
             mkdir -p "dist/${NAME}/bin"
             mkdir -p "dist/${NAME}/bootstrap/bin"
             cp "bin/chasm-${PLATFORM}"                    "dist/${NAME}/bin/chasm"
+            cp "bin/chasm-lsp-${PLATFORM}"                "dist/${NAME}/bin/chasm-lsp"
             cp "bootstrap/bin/chasm-${PLATFORM}"          "dist/${NAME}/bootstrap/bin/chasm-${PLATFORM}" 2>/dev/null || true
             cp -r runtime                                  "dist/${NAME}/runtime"
             cp -r engine                                   "dist/${NAME}/engine"
@@ -108,6 +114,7 @@ jobs:
           mkdir -p "dist/${NAME}/bin"
           mkdir -p "dist/${NAME}/bootstrap/bin"
           cp "bin/chasm-windows-x86_64.exe"                      "dist/${NAME}/bin/chasm.exe"
+          cp "bin/chasm-lsp-windows-x86_64.exe"                  "dist/${NAME}/bin/chasm-lsp.exe"
           cp "bootstrap/bin/chasm-windows-x86_64.exe"            "dist/${NAME}/bootstrap/bin/chasm-windows-x86_64.exe" 2>/dev/null || true
           cp -r runtime                                           "dist/${NAME}/runtime"
           cp -r engine                                            "dist/${NAME}/engine"

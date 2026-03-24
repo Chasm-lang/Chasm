@@ -75,10 +75,12 @@ cp -r "$EXTRACTED/." "$INSTALL_DIR/"
 # Make binaries executable
 chmod +x "$INSTALL_DIR/bootstrap/bin/"*
 chmod +x "$INSTALL_DIR/bin/chasm"
+[ -f "$INSTALL_DIR/bin/chasm-lsp" ] && chmod +x "$INSTALL_DIR/bin/chasm-lsp"
 
-# Symlink CLI into BIN_DIR
+# Symlink CLI and LSP into BIN_DIR
 mkdir -p "$BIN_DIR"
 ln -sf "$INSTALL_DIR/bin/chasm" "$BIN_DIR/chasm"
+[ -f "$INSTALL_DIR/bin/chasm-lsp" ] && ln -sf "$INSTALL_DIR/bin/chasm-lsp" "$BIN_DIR/chasm-lsp"
 
 echo ""
 echo "Chasm $TAG installed to $INSTALL_DIR"
