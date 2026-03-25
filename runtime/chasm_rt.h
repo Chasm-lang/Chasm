@@ -12,19 +12,27 @@ typedef struct {
     size_t   cap;
 } ChasmArena;
 
-/* Frame-heap tracker: malloc'd blocks (arrays, builders) registered here
- * are freed automatically when chasm_clear_frame is called.
- * 512 slots covers the vast majority of real games with headroom to spare. */
+/* Frame-heap tracker: malloc'd blocks (arrays, builders) are tracked inside
+ * the frame arena buffer itself (last sizeof(_ChasmFH) bytes), so ChasmCtx
+ * stays ABI-stable — its layout is always exactly three ChasmArena fields.
+ *
+ * Call chasm_ctx_init_gc(ctx) once after setting up ctx->frame to reserve
+ * the GC region.  512 slots covers the vast majority of real games. */
 #define CHASM_FRAME_HEAP_CAP 512
 
 typedef struct {
     ChasmArena frame;
     ChasmArena script;
     ChasmArena persistent;
-    /* frame-heap GC */
-    void *_fh[CHASM_FRAME_HEAP_CAP];
-    int   _fhn;
 } ChasmCtx;
+
+/* GC bookkeeping stored at the END of the frame buffer (last sizeof bytes).
+ * Layout: void *ptrs[512] then int32_t count + int32_t _pad = 4104 bytes. */
+typedef struct {
+    void    *ptrs[CHASM_FRAME_HEAP_CAP]; /* 512 * 8 = 4096 bytes */
+    int32_t  count;                       /* 4 bytes               */
+    int32_t  _pad;                        /* 4 bytes (align total to 8) */
+} _ChasmFH;                               /* sizeof = 4104 bytes   */
 
 static inline void *chasm_alloc(ChasmArena *a, size_t n, size_t align) {
     size_t adj = (align - (a->used & (align - 1))) & (align - 1);
@@ -35,23 +43,42 @@ static inline void *chasm_alloc(ChasmArena *a, size_t n, size_t align) {
     return p;
 }
 
+/* Access the GC header embedded just past the end of the user alloc region. */
+static inline _ChasmFH *_chasm_fh(ChasmCtx *ctx) {
+    return (_ChasmFH *)(ctx->frame.base + ctx->frame.cap);
+}
+
+/* Call once after populating ctx->frame.{base,cap} to carve out the GC region.
+ * Reduces frame.cap by sizeof(_ChasmFH) and zeroes the header. */
+static inline void chasm_ctx_init_gc(ChasmCtx *ctx) {
+    ctx->frame.cap -= sizeof(_ChasmFH);
+    memset(_chasm_fh(ctx), 0, sizeof(_ChasmFH));
+}
+
 /* Register a malloc'd pointer for automatic free on chasm_clear_frame. */
 static inline void chasm_fh_register(ChasmCtx *ctx, void *p) {
-    if (p && ctx->_fhn < CHASM_FRAME_HEAP_CAP)
-        ctx->_fh[ctx->_fhn++] = p;
+    _ChasmFH *fh = _chasm_fh(ctx);
+    if (p && fh->count < CHASM_FRAME_HEAP_CAP)
+        fh->ptrs[fh->count++] = p;
+}
+
+/* Return the number of pointers currently tracked (useful for testing). */
+static inline int chasm_fh_count(ChasmCtx *ctx) {
+    return _chasm_fh(ctx)->count;
 }
 
 static inline void chasm_clear_frame(ChasmCtx *ctx) {
-    for (int i = 0; i < ctx->_fhn; i++) { free(ctx->_fh[i]); ctx->_fh[i] = NULL; }
-    ctx->_fhn   = 0;
+    _ChasmFH *fh = _chasm_fh(ctx);
+    for (int i = 0; i < fh->count; i++) { free(fh->ptrs[i]); fh->ptrs[i] = NULL; }
+    fh->count = 0;
     ctx->frame.used = 0;
 }
 
 /* Promote a scalar value to a longer-lived arena (primitive: no-op copy). */
 #define chasm_promote_scalar(val) (val)
 
-/* copy_to_script / persist_copy — scalars are no-ops; strings are copied into
- * the longer-lived arena so they survive frame resets.                       */
+/* Scalar copy macros — no-ops since codegen emits chasm_str_to_script /
+ * chasm_str_to_persistent explicitly for string attrs. */
 #define chasm_copy_to_script(ctx, val) (val)
 #define chasm_persist_copy(ctx, val, ...) (val)
 
@@ -279,17 +306,14 @@ static inline ChasmArray chasm_array_new(ChasmCtx *ctx, int64_t cap) {
     return (ChasmArray){d, 0, cap};
 }
 static inline void chasm_array_push(ChasmCtx *ctx, ChasmArray *a, int64_t v) {
-    (void)ctx;
     if (a->len >= a->cap) {
         a->cap = a->cap * 2 + 8;
-        /* realloc may change pointer — update registration if possible */
         void *old = a->data;
         a->data = realloc(a->data, (size_t)a->cap * 8);
         if (a->data != old) {
-            /* update the registered pointer in the frame-heap slot */
-            for (int _i = 0; _i < ctx->_fhn; _i++) {
-                if (ctx->_fh[_i] == old) { ctx->_fh[_i] = a->data; break; }
-            }
+            _ChasmFH *fh = _chasm_fh(ctx);
+            for (int _i = 0; _i < fh->count; _i++)
+                if (fh->ptrs[_i] == old) { fh->ptrs[_i] = a->data; break; }
         }
     }
     if (a->data) ((int64_t*)a->data)[a->len++] = v;
@@ -312,8 +336,9 @@ static inline void chasm_str_builder_push(ChasmCtx *ctx, ChasmStrBuilder *b, int
         char *old = b->buf; b->cap = b->cap*2+8;
         b->buf = (char*)realloc(b->buf, (size_t)b->cap);
         if (b->buf != old) {
-            for (int _i = 0; _i < ctx->_fhn; _i++)
-                if (ctx->_fh[_i] == old) { ctx->_fh[_i] = b->buf; break; }
+            _ChasmFH *fh = _chasm_fh(ctx);
+            for (int _i = 0; _i < fh->count; _i++)
+                if (fh->ptrs[_i] == old) { fh->ptrs[_i] = b->buf; break; }
         }
     }
     if (b->buf) b->buf[b->len++] = (char)c;
@@ -325,8 +350,9 @@ static inline void chasm_str_builder_append(ChasmCtx *ctx, ChasmStrBuilder *b, c
         char *old = b->buf; b->cap = b->cap*2+(int64_t)sl+8;
         b->buf = (char*)realloc(b->buf, (size_t)b->cap);
         if (b->buf != old) {
-            for (int _i = 0; _i < ctx->_fhn; _i++)
-                if (ctx->_fh[_i] == old) { ctx->_fh[_i] = b->buf; break; }
+            _ChasmFH *fh = _chasm_fh(ctx);
+            for (int _i = 0; _i < fh->count; _i++)
+                if (fh->ptrs[_i] == old) { fh->ptrs[_i] = b->buf; break; }
         }
     }
     if (b->buf) { memcpy(b->buf + b->len, s, sl); b->len += (int64_t)sl; }

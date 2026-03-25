@@ -39,6 +39,9 @@ static ChasmCtx make_ctx(void) {
         .script     = { sb, 0, sizeof(sb) },
         .persistent = { pb, 0, sizeof(pb) },
     };
+#ifdef CHASM_FRAME_HEAP_CAP
+    chasm_ctx_init_gc(&ctx);
+#endif
     return ctx;
 }
 
@@ -98,11 +101,11 @@ static void test_frame_gc(void) {
 
 #ifdef CHASM_FRAME_HEAP_CAP
     /* Frame-heap GC is present (standalone runtime) */
-    int n_before = ctx._fhn;
+    int n_before = chasm_fh_count(&ctx);
     CHECK(n_before >= 3, "gc: 3 arrays registered in frame heap");
 
     chasm_clear_frame(&ctx); /* should free a1, a2, a3 without crashing */
-    CHECK_EQ_I(ctx._fhn, 0, "gc: frame heap count reset to 0");
+    CHECK_EQ_I(chasm_fh_count(&ctx), 0, "gc: frame heap count reset to 0");
     CHECK_EQ_I((int)ctx.frame.used, 0, "gc: frame arena reset");
 
     /* Reuse: create a new array after clear — must not crash */

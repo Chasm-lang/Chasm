@@ -737,8 +737,20 @@ defp emit_stmt(pool :: []Node, ch :: []int, types :: []int,
 
   if tag == :at_assign do
     # @name = expr → g_name = expr;
+    # If the attr has script/persistent lifetime and the RHS is a string,
+    # wrap with the appropriate promotion call so the string survives frame resets.
     attr_name = str_slice(node.name, 1, str_len(node.name))
     val_c     = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.b)
+    rhs_t     = types.get(node.b)
+    lt        = ve_lookup(var_elems, ve_len, str_concat("__lt_", attr_name))
+    if rhs_t == 4 do
+      if lt == 2 do
+        val_c = str_concat("chasm_str_to_script(ctx, ", str_concat(val_c, ")"))
+      end
+      if lt == 3 do
+        val_c = str_concat("chasm_str_to_persistent(ctx, ", str_concat(val_c, ")"))
+      end
+    end
     print(str_concat(ind, str_concat("g_", str_concat(attr_name, str_concat(" = ", str_concat(val_c, ";"))))))
     return ve_len
   end
@@ -1062,7 +1074,8 @@ defp emit_fn(pool :: []Node, ch :: []int, types :: []int,
   params_str = ""
   var_elems  :: []VarElem = make_ve_pool(1024)
   ve_len     = 0
-  # Pre-populate fixed @attr arrays so push calls on them use push_fixed
+  # Pre-populate fixed @attr arrays so push calls on them use push_fixed.
+  # Also register attr lifetimes under "__lt_<name>" for use in at_assign emit.
   root_node = pool.get(root)
   rcs = root_node.a
   rcl = root_node.b
@@ -1071,12 +1084,15 @@ defp emit_fn(pool :: []Node, ch :: []int, types :: []int,
     rdecl_idx = ch.get(rcs + ri2)
     rdecl     = pool.get(rdecl_idx)
     if rdecl.tag == :at_decl do
+      rattr_name = str_slice(rdecl.name, 1, str_len(rdecl.name))
+      # Register lifetime so at_assign can emit string promotion wrappers.
+      # Value: 1=frame, 2=script, 3=persistent, 0=unknown (treat as frame).
+      ve_len = ve_push(var_elems, ve_len, str_concat("__lt_", rattr_name), rdecl.b)
       rinit_t = types.get(rdecl.a)
       if rinit_t == 7 do
         rinit_node = pool.get(rdecl.a)
         if rinit_node.tag == :call do
           if rinit_node.name == "array_fixed" do
-            rattr_name = str_slice(rdecl.name, 1, str_len(rdecl.name))
             # Detect elem type from default value arg (2nd arg if present)
             fixed_elem_tid = -2
             if rinit_node.b >= 2 do
