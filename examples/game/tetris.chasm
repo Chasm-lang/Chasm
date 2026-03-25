@@ -1,0 +1,643 @@
+# tetris.chasm — Tetris with Tetris_Asset_Pack
+# Run: chasm watch --engine raylib examples/game/tetris.chasm
+#
+# Controls: LEFT/RIGHT move  UP rotate  DOWN soft-drop
+#           SPACE hard-drop  C hold  P/ESC pause  ENTER start/restart
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+# Board is 10 cols x 20 rows, stored row-major
+# Window: 800x720
+# Board pixel origin (top-left of cell 0,0): x=240, y=40
+# Border image (352x672) drawn at: x=224, y=24
+# Hold panel (192x192): x=16,  y=40
+# Next panel (192x192): x=592, y=40
+
+@BOARD_OX :: persistent = 240.0   # board pixel origin x
+@BOARD_OY :: persistent = 40.0    # board pixel origin y
+@CELL_SIZE :: persistent = 32     # pixels per cell
+@COLS      :: persistent = 10
+@ROWS      :: persistent = 20
+@NUM_CELLS :: persistent = 200    # COLS * ROWS
+
+@DAS_DELAY  :: persistent = 0.17  # seconds before auto-shift kicks in
+@DAS_REPEAT :: persistent = 0.05  # seconds between auto-shift steps
+@LOCK_DELAY :: persistent = 0.5   # seconds before piece locks
+
+# Piece types
+@I_PIECE :: persistent = 1
+@O_PIECE :: persistent = 2
+@T_PIECE :: persistent = 3
+@S_PIECE :: persistent = 4
+@Z_PIECE :: persistent = 5
+@J_PIECE :: persistent = 6
+@L_PIECE :: persistent = 7
+
+# Game states
+@STATE_MENU     :: persistent = 0
+@STATE_PLAYING  :: persistent = 1
+@STATE_PAUSED   :: persistent = 2
+@STATE_GAMEOVER :: persistent = 3
+
+# Key codes
+@KEY_ENTER :: persistent = 257
+@KEY_ESC   :: persistent = 256
+@KEY_LEFT  :: persistent = 263
+@KEY_RIGHT :: persistent = 262
+@KEY_UP    :: persistent = 265
+@KEY_DOWN  :: persistent = 264
+@KEY_SPACE :: persistent = 32
+@KEY_HOLD  :: persistent = 67     # C
+@KEY_PAUSE :: persistent = 80     # P
+
+# Colors
+@COLOR_WHITE      :: persistent = 0xFFFFFFFF
+@COLOR_BRIGHT_RED :: persistent = 0xFF4422FF
+@COLOR_GOLD       :: persistent = 0xFFCC44FF
+@COLOR_CYAN       :: persistent = 0x44EEFFFF
+@COLOR_GREEN      :: persistent = 0x44FF88FF
+@COLOR_PURPLE     :: persistent = 0xCC88FFFF
+@COLOR_DIM        :: persistent = 0x888888FF
+@COLOR_OVERLAY    :: persistent = 0x000000AA
+@COLOR_GRID_TINT  :: persistent = 0x44444488
+@COLOR_GHOST_TINT :: persistent = 0xFFFFFF55
+
+# =============================================================================
+# Piece layout data
+# index = (type-1)*16 + rotation*4 + cell
+# =============================================================================
+
+@piece_dx :: persistent = array_fixed(112, 0)
+@piece_dy :: persistent = array_fixed(112, 0)
+
+defp seed(t :: int, r :: int, c :: int, dx :: int, dy :: int) do
+  i :: frame = (t - 1) * 16 + r * 4 + c
+  @piece_dx.set(i, dx)
+  @piece_dy.set(i, dy)
+end
+
+defp seed_all_pieces() do
+  # I (type 1)
+  seed(1,0,0, 0,1) seed(1,0,1, 1,1) seed(1,0,2, 2,1) seed(1,0,3, 3,1)
+  seed(1,1,0, 2,0) seed(1,1,1, 2,1) seed(1,1,2, 2,2) seed(1,1,3, 2,3)
+  seed(1,2,0, 0,2) seed(1,2,1, 1,2) seed(1,2,2, 2,2) seed(1,2,3, 3,2)
+  seed(1,3,0, 1,0) seed(1,3,1, 1,1) seed(1,3,2, 1,2) seed(1,3,3, 1,3)
+  # O (type 2) — same all rotations
+  for r in 0..4 do
+    seed(2,r,0, 1,0) seed(2,r,1, 2,0) seed(2,r,2, 1,1) seed(2,r,3, 2,1)
+  end
+  # T (type 3)
+  seed(3,0,0, 0,0) seed(3,0,1, 1,0) seed(3,0,2, 2,0) seed(3,0,3, 1,1)
+  seed(3,1,0, 1,0) seed(3,1,1, 2,1) seed(3,1,2, 1,2) seed(3,1,3, 1,1)
+  seed(3,2,0, 0,1) seed(3,2,1, 1,1) seed(3,2,2, 2,1) seed(3,2,3, 1,0)
+  seed(3,3,0, 0,1) seed(3,3,1, 1,0) seed(3,3,2, 1,1) seed(3,3,3, 1,2)
+  # S (type 4)
+  seed(4,0,0, 1,0) seed(4,0,1, 2,0) seed(4,0,2, 0,1) seed(4,0,3, 1,1)
+  seed(4,1,0, 1,0) seed(4,1,1, 1,1) seed(4,1,2, 2,1) seed(4,1,3, 2,2)
+  seed(4,2,0, 1,0) seed(4,2,1, 2,0) seed(4,2,2, 0,1) seed(4,2,3, 1,1)
+  seed(4,3,0, 1,0) seed(4,3,1, 1,1) seed(4,3,2, 2,1) seed(4,3,3, 2,2)
+  # Z (type 5)
+  seed(5,0,0, 0,0) seed(5,0,1, 1,0) seed(5,0,2, 1,1) seed(5,0,3, 2,1)
+  seed(5,1,0, 2,0) seed(5,1,1, 1,1) seed(5,1,2, 2,1) seed(5,1,3, 1,2)
+  seed(5,2,0, 0,0) seed(5,2,1, 1,0) seed(5,2,2, 1,1) seed(5,2,3, 2,1)
+  seed(5,3,0, 2,0) seed(5,3,1, 1,1) seed(5,3,2, 2,1) seed(5,3,3, 1,2)
+  # J (type 6)
+  seed(6,0,0, 0,0) seed(6,0,1, 0,1) seed(6,0,2, 1,1) seed(6,0,3, 2,1)
+  seed(6,1,0, 1,0) seed(6,1,1, 2,0) seed(6,1,2, 1,1) seed(6,1,3, 1,2)
+  seed(6,2,0, 0,0) seed(6,2,1, 1,0) seed(6,2,2, 2,0) seed(6,2,3, 2,1)
+  seed(6,3,0, 1,0) seed(6,3,1, 1,1) seed(6,3,2, 0,2) seed(6,3,3, 1,2)
+  # L (type 7)
+  seed(7,0,0, 2,0) seed(7,0,1, 0,1) seed(7,0,2, 1,1) seed(7,0,3, 2,1)
+  seed(7,1,0, 1,0) seed(7,1,1, 1,1) seed(7,1,2, 1,2) seed(7,1,3, 2,2)
+  seed(7,2,0, 0,0) seed(7,2,1, 1,0) seed(7,2,2, 2,0) seed(7,2,3, 0,1)
+  seed(7,3,0, 0,0) seed(7,3,1, 1,0) seed(7,3,2, 0,1) seed(7,3,3, 0,2)
+end
+
+defp pdx(t :: int, r :: int, c :: int) :: int do
+  return @piece_dx.get((t - 1) * 16 + r * 4 + c)
+end
+
+defp pdy(t :: int, r :: int, c :: int) :: int do
+  return @piece_dy.get((t - 1) * 16 + r * 4 + c)
+end
+
+# =============================================================================
+# Board state
+# =============================================================================
+
+@board :: script = array_fixed(200, 0)
+
+defp board_get(col :: int, row :: int) :: int do
+  if col < 0 or col > 9 or row < 0 or row > 19 do return 1 end
+  return @board.get(row * 10 + col)
+end
+
+defp board_set(col :: int, row :: int, val :: int) do
+  if col >= 0 and col <= 9 and row >= 0 and row <= 19 do
+    @board.set(row * 10 + col, val)
+  end
+end
+
+defp collides(t :: int, r :: int, px :: int, py :: int) :: int do
+  for c in 0..4 do
+    cx :: frame = px + pdx(t, r, c)
+    cy :: frame = py + pdy(t, r, c)
+    if cx < 0 or cx > 9 do return 1 end
+    if cy > 19 do return 1 end
+    if cy >= 0 do
+      if board_get(cx, cy) != 0 do return 1 end
+    end
+  end
+  return 0
+end
+
+defp lock_piece() do
+  for c in 0..4 do
+    board_set(@px + pdx(@pt, @pr, c), @py + pdy(@pt, @pr, c), @pt)
+  end
+end
+
+defp clear_lines() :: int do
+  cleared :: frame = 0
+  row :: frame = 19
+  while row >= 0 do
+    full :: frame = 1
+    for col in 0..10 do
+      if board_get(col, row) == 0 do full = 0 end
+    end
+    if full == 1 do
+      cleared = cleared + 1
+      # Shift all rows above down by one
+      r2 :: frame = row
+      while r2 > 0 do
+        for col in 0..10 do
+          board_set(col, r2, board_get(col, r2 - 1))
+        end
+        r2 = r2 - 1
+      end
+      for col in 0..10 do board_set(col, 0, 0) end
+      # Recheck same row index after shift
+    else
+      row = row - 1
+    end
+  end
+  return cleared
+end
+
+# =============================================================================
+# Active piece state
+# =============================================================================
+
+@px        :: script = 3
+@py        :: script = 0
+@pt        :: script = 1
+@pr        :: script = 0
+@next_t    :: script = 2
+@hold_t    :: script = 0
+@hold_used :: script = 0
+
+defp rand_piece() :: int do
+  t :: frame = time() * 1000.0
+  n :: frame = t - floor(t / 7.0) * 7.0
+  i :: frame = floor(n) + 1
+  if i < 1 do i = 1 end
+  if i > 7 do i = 7 end
+  return copy_to_script(i)
+end
+
+defp spawn_piece() do
+  @pt        = @next_t
+  @pr        = 0
+  @px        = 3
+  @py        = 0
+  @next_t    = copy_to_script(rand_piece())
+  @hold_used = 0
+  @on_floor  = 0
+  @lock_t    = 0.0
+end
+
+defp ghost_y() :: int do
+  gy :: frame = @py
+  while collides(@pt, @pr, @px, gy + 1) == 0 do
+    gy = gy + 1
+  end
+  return gy
+end
+
+defp try_rotate(new_r :: int) do
+  # Try rotation with wall kicks: center, left, right
+  if collides(@pt, new_r, @px, @py) == 0 do
+    @pr = copy_to_script(new_r)
+    play_sound(@snd_rotate)
+  else
+    if collides(@pt, new_r, @px - 1, @py) == 0 do
+      @px = @px - 1
+      @pr = copy_to_script(new_r)
+      play_sound(@snd_rotate)
+    else
+      if collides(@pt, new_r, @px + 1, @py) == 0 do
+        @px = @px + 1
+        @pr = copy_to_script(new_r)
+        play_sound(@snd_rotate)
+      end
+    end
+  end
+  @lock_t = 0.0
+end
+
+# =============================================================================
+# Timing and scoring
+# =============================================================================
+
+@fall_t   :: script = 0.0
+@lock_t   :: script = 0.0
+@on_floor :: script = 0
+@das_t    :: script = 0.0
+@das_dir  :: script = 0
+
+@score  :: script     = 0
+@best   :: persistent = 0
+@lines  :: script     = 0
+@level  :: script     = 1
+@gstate :: script     = 0
+
+defp fall_speed() :: float do
+  # Starts at 1.2s per row, speeds up 0.07s per level, min 0.1s
+  s :: frame = 1.2 - (@level - 1) * 0.07
+  if s < 0.1 do s = 0.1 end
+  return s
+end
+
+defp line_score(n :: int) :: int do
+  base :: frame = match n { 0=>0 1=>100 2=>300 3=>500 4=>800 _=>800 }
+  return base * @level
+end
+
+# Lock piece, clear lines, update score, spawn next piece
+defp do_lock_and_spawn() do
+  lock_piece()
+  play_sound(@snd_drop)
+
+  n :: frame = clear_lines()
+  @lines = @lines + n
+  @level = @lines / 10 + 1
+  @score = @score + line_score(n)
+
+  if n == 4 do
+    play_sound(@snd_tetris)
+  else
+    if n > 0 do play_sound(@snd_clear) end
+  end
+
+  if @score > @best do @best = persist_copy(@score) end
+
+  spawn_piece()
+
+  # Check if spawn position is already blocked = game over
+  if collides(@pt, @pr, @px, @py) == 1 do
+    @gstate = @STATE_GAMEOVER
+    stop_music(@music)
+    play_sound(@snd_over)
+  end
+end
+
+# =============================================================================
+# Textures and audio
+# =============================================================================
+
+@tex_bg     :: script = 0
+@tex_border :: script = 0
+@tex_hold   :: script = 0
+@tex_next   :: script = 0
+@tex_grid   :: script = 0
+@tex_blocks :: script = array_fixed(8, 0)
+
+@music      :: script = 0
+@snd_move   :: script = 0
+@snd_rotate :: script = 0
+@snd_drop   :: script = 0
+@snd_clear  :: script = 0
+@snd_tetris :: script = 0
+@snd_hold   :: script = 0
+@snd_over   :: script = 0
+
+# =============================================================================
+# on_init
+# =============================================================================
+
+def on_init() do
+  seed_all_pieces()
+  init_audio()
+  set_title("Tetris")
+
+  @tex_bg     = load_texture("examples/game/Tetris_Asset_Pack/background/background.png")
+  @tex_border = load_texture("examples/game/Tetris_Asset_Pack/UI/border/border.png")
+  @tex_hold   = load_texture("examples/game/Tetris_Asset_Pack/UI/hold/hold.png")
+  @tex_next   = load_texture("examples/game/Tetris_Asset_Pack/UI/next/next.png")
+  @tex_grid   = load_texture("examples/game/Tetris_Asset_Pack/UI/grid/grid.png")
+
+  @tex_blocks.set(1, load_texture("examples/game/Tetris_Asset_Pack/blocks/purple_block/purple_block.png"))
+  @tex_blocks.set(2, load_texture("examples/game/Tetris_Asset_Pack/blocks/red_block/red_block.png"))
+  @tex_blocks.set(3, load_texture("examples/game/Tetris_Asset_Pack/blocks/blue_block/blue_block.png"))
+  @tex_blocks.set(4, load_texture("examples/game/Tetris_Asset_Pack/blocks/yellow_block/yellow_block.png"))
+  @tex_blocks.set(5, load_texture("examples/game/Tetris_Asset_Pack/blocks/cyan_block/cyan_block.png"))
+  @tex_blocks.set(6, load_texture("examples/game/Tetris_Asset_Pack/blocks/pink_block/pink_block.png"))
+  @tex_blocks.set(7, load_texture("examples/game/Tetris_Asset_Pack/blocks/green_block/green_block.png"))
+
+  @music      = load_music("examples/game/Tetris_Asset_Pack/music/Type A.mp3")
+  @snd_move   = load_sound("examples/game/Tetris_Asset_Pack/sound/click.mp3")
+  @snd_rotate = load_sound("examples/game/Tetris_Asset_Pack/sound/rotation.mp3")
+  @snd_drop   = load_sound("examples/game/Tetris_Asset_Pack/sound/drop.mp3")
+  @snd_clear  = load_sound("examples/game/Tetris_Asset_Pack/sound/line_clear.mp3")
+  @snd_tetris = load_sound("examples/game/Tetris_Asset_Pack/sound/tetris_clear.mp3")
+  @snd_hold   = load_sound("examples/game/Tetris_Asset_Pack/sound/hold.mp3")
+  @snd_over   = load_sound("examples/game/Tetris_Asset_Pack/sound/game_over.mp3")
+
+  music_volume(@music, 0.6)
+end
+
+# =============================================================================
+# Reset
+# =============================================================================
+
+defp reset_game() do
+  for i in 0..200 do @board.set(i, 0) end
+  @score     = 0
+  @lines     = 0
+  @level     = 1
+  @hold_t    = 0
+  @hold_used = 0
+  @fall_t    = 0.0
+  @lock_t    = 0.0
+  @das_t     = 0.0
+  @das_dir   = 0
+  @next_t    = copy_to_script(rand_piece())
+  spawn_piece()
+  @gstate    = @STATE_PLAYING
+  play_music(@music)
+end
+
+# =============================================================================
+# on_tick
+# =============================================================================
+
+def on_tick(dt :: float) do
+  update_music(@music)
+
+  # Menu and game over — just wait for ENTER
+  if @gstate == @STATE_MENU or @gstate == @STATE_GAMEOVER do
+    if key_pressed(@KEY_ENTER) do reset_game() end
+    return
+  end
+
+  # Pause toggle
+  if key_pressed(@KEY_PAUSE) or key_pressed(@KEY_ESC) do
+    if @gstate == @STATE_PLAYING do
+      @gstate = @STATE_PAUSED
+      pause_music(@music)
+    else
+      @gstate = @STATE_PLAYING
+      resume_music(@music)
+    end
+  end
+  if @gstate == @STATE_PAUSED do return end
+
+  # ---- Hold ----------------------------------------------------------------
+  if key_pressed(@KEY_HOLD) and @hold_used == 0 do
+    play_sound(@snd_hold)
+    prev_hold :: frame = @hold_t
+    @hold_t    = @pt
+    @hold_used = 1
+    if prev_hold == 0 do
+      spawn_piece()
+    else
+      @pt       = copy_to_script(prev_hold)
+      @pr       = 0
+      @px       = 3
+      @py       = 0
+      @on_floor = 0
+      @lock_t   = 0.0
+    end
+  end
+
+  # ---- Rotate (UP) ---------------------------------------------------------
+  if key_pressed(@KEY_UP) do
+    new_r :: frame = (@pr + 1) - ((@pr + 1) / 4) * 4
+    try_rotate(new_r)
+  end
+
+  # ---- Hard drop (SPACE) ---------------------------------------------------
+  if key_pressed(@KEY_SPACE) do
+    @py = copy_to_script(ghost_y())
+    do_lock_and_spawn()
+    return
+  end
+
+  # ---- DAS (Left / Right) --------------------------------------------------
+  left_held  :: frame = key_down(@KEY_LEFT)
+  right_held :: frame = key_down(@KEY_RIGHT)
+
+  if left_held and not right_held do
+    if @das_dir != -1 do
+      # First press — move once immediately, start DAS timer
+      @das_dir = -1
+      @das_t   = 0.0
+      if collides(@pt, @pr, @px - 1, @py) == 0 do
+        @px = @px - 1
+        play_sound(@snd_move)
+      end
+    else
+      # Held — fire after DAS_DELAY, then every DAS_REPEAT
+      @das_t = @das_t + dt
+      if @das_t > @DAS_DELAY do
+        if collides(@pt, @pr, @px - 1, @py) == 0 do
+          @px = @px - 1
+          play_sound(@snd_move)
+        end
+        @das_t = @das_t - @DAS_REPEAT
+      end
+    end
+  else
+    if right_held and not left_held do
+      if @das_dir != 1 do
+        @das_dir = 1
+        @das_t   = 0.0
+        if collides(@pt, @pr, @px + 1, @py) == 0 do
+          @px = @px + 1
+          play_sound(@snd_move)
+        end
+      else
+        @das_t = @das_t + dt
+        if @das_t > @DAS_DELAY do
+          if collides(@pt, @pr, @px + 1, @py) == 0 do
+            @px = @px + 1
+            play_sound(@snd_move)
+          end
+          @das_t = @das_t - @DAS_REPEAT
+        end
+      end
+    else
+      @das_dir = 0
+      @das_t   = 0.0
+    end
+  end
+
+  # ---- Gravity -------------------------------------------------------------
+  step :: frame = fall_speed() / 20.0
+  if key_down(@KEY_DOWN) do step = 0.05 end   # soft drop
+
+  @fall_t = @fall_t + dt
+  if @fall_t >= step do
+    @fall_t = 0.0
+    if collides(@pt, @pr, @px, @py + 1) == 0 do
+      @py       = @py + 1
+      @on_floor = 0
+      @lock_t   = 0.0
+    else
+      @on_floor = 1
+    end
+  end
+
+  # ---- Lock delay ----------------------------------------------------------
+  if @on_floor == 1 do
+    @lock_t = @lock_t + dt
+    if @lock_t >= @LOCK_DELAY do
+      do_lock_and_spawn()
+    end
+  end
+end
+
+# =============================================================================
+# Drawing
+# =============================================================================
+
+defp block_tex(t :: int) :: int do
+  return @tex_blocks.get(t)
+end
+
+defp draw_block(col :: int, row :: int, t :: int, alpha :: int) do
+  if t == 0 do return end
+  x :: frame = @BOARD_OX + col * 32.0
+  y :: frame = @BOARD_OY + row * 32.0
+  draw_texture(block_tex(t), x, y, 0xFFFFFF00 + alpha)
+end
+
+defp draw_block_at(x :: float, y :: float, t :: int) do
+  if t == 0 do return end
+  draw_texture(block_tex(t), x, y, @COLOR_WHITE)
+end
+
+defp draw_piece_in_panel(panel_x :: float, panel_y :: float, t :: int) do
+  if t == 0 do return end
+  ox :: frame = panel_x + 32.0
+  oy :: frame = panel_y + 32.0
+  for c in 0..4 do
+    draw_block_at(ox + pdx(t, 0, c) * 32.0, oy + pdy(t, 0, c) * 32.0, t)
+  end
+end
+
+defp draw_board_grid() do
+  for row in 0..20 do
+    for col in 0..10 do
+      x :: frame = @BOARD_OX + col * 32.0
+      y :: frame = @BOARD_OY + row * 32.0
+      draw_texture(@tex_grid, x, y, @COLOR_GRID_TINT)
+    end
+  end
+end
+
+defp draw_locked_cells() do
+  for row in 0..20 do
+    for col in 0..10 do
+      t :: frame = board_get(col, row)
+      if t != 0 do draw_block(col, row, t, 255) end
+    end
+  end
+end
+
+defp draw_ghost_piece() do
+  gy :: frame = ghost_y()
+  if gy == @py do return end  # already on floor, no ghost needed
+  for c in 0..4 do
+    x :: frame = @BOARD_OX + (@px + pdx(@pt, @pr, c)) * 32.0
+    y :: frame = @BOARD_OY + (gy  + pdy(@pt, @pr, c)) * 32.0
+    draw_texture(block_tex(@pt), x, y, @COLOR_GHOST_TINT)
+  end
+end
+
+defp draw_active_piece() do
+  for c in 0..4 do
+    cx :: frame = @px + pdx(@pt, @pr, c)
+    cy :: frame = @py + pdy(@pt, @pr, c)
+    if cy >= 0 do draw_block(cx, cy, @pt, 255) end
+  end
+end
+
+defp draw_hud() do
+  draw_text("HOLD", 52.0,  16.0, 18, @COLOR_CYAN)
+  draw_texture(@tex_hold, 16.0, 40.0, @COLOR_WHITE)
+  draw_piece_in_panel(16.0, 40.0, @hold_t)
+
+  draw_text("NEXT", 628.0, 16.0, 18, @COLOR_CYAN)
+  draw_texture(@tex_next, 592.0, 40.0, @COLOR_WHITE)
+  draw_piece_in_panel(592.0, 40.0, @next_t)
+
+  draw_text("SCORE",     608.0, 260.0, 16, @COLOR_CYAN)
+  draw_text("#{@score}", 608.0, 282.0, 22, @COLOR_WHITE)
+
+  draw_text("BEST",      608.0, 322.0, 16, @COLOR_CYAN)
+  draw_text("#{@best}",  608.0, 344.0, 22, @COLOR_GOLD)
+
+  draw_text("LINES",     608.0, 384.0, 16, @COLOR_CYAN)
+  draw_text("#{@lines}", 608.0, 406.0, 22, @COLOR_WHITE)
+
+  draw_text("LEVEL",     608.0, 446.0, 16, @COLOR_CYAN)
+  draw_text("#{@level}", 608.0, 468.0, 22, @COLOR_GREEN)
+end
+
+def on_draw() do
+  draw_texture_tiled(@tex_bg, 0.0, 0.0, 320.0, 180.0, 0.0, 0.0, 800.0, 720.0, @COLOR_WHITE)
+
+  # Menu screen
+  if @gstate == @STATE_MENU do
+    draw_text("TETRIS",                        300.0, 240.0, 64, @COLOR_WHITE)
+    draw_text("Press ENTER to start",          255.0, 340.0, 22, @COLOR_CYAN)
+    draw_text("LEFT / RIGHT — move",           270.0, 390.0, 18, @COLOR_GOLD)
+    draw_text("UP — rotate",                   270.0, 415.0, 18, @COLOR_GOLD)
+    draw_text("SPACE — hard drop",             270.0, 440.0, 18, @COLOR_GOLD)
+    draw_text("C — hold   P — pause",          270.0, 465.0, 18, @COLOR_GOLD)
+    draw_fps(10.0, 10.0)
+    return
+  end
+
+  # Board
+  draw_texture(@tex_border, 224.0, 24.0, @COLOR_WHITE)
+  draw_board_grid()
+  draw_locked_cells()
+
+  if @gstate == @STATE_PLAYING do
+    draw_ghost_piece()
+  end
+
+  draw_active_piece()
+  draw_hud()
+
+  # Pause overlay
+  if @gstate == @STATE_PAUSED do
+    draw_rect(0.0, 0.0, 800.0, 720.0, @COLOR_OVERLAY)
+    draw_text("PAUSED",           310.0, 310.0, 48, @COLOR_WHITE)
+    draw_text("Press P to resume", 275.0, 380.0, 20, @COLOR_CYAN)
+  end
+
+  # Game over overlay
+  if @gstate == @STATE_GAMEOVER do
+    draw_rect(0.0, 0.0, 800.0, 720.0, @COLOR_OVERLAY)
+    draw_text("GAME OVER",              265.0, 280.0, 48, @COLOR_BRIGHT_RED)
+    draw_text("Score: #{@score}",       310.0, 355.0, 26, @COLOR_WHITE)
+    draw_text("Press ENTER to restart", 248.0, 410.0, 20, @COLOR_CYAN)
+  end
+
+  draw_fps(10.0, 700.0)
+end

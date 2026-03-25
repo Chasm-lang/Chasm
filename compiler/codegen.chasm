@@ -490,8 +490,12 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
               cond_str = str_concat("(", str_concat(subj_c, str_concat(" == ", str_concat(enum_const, ")"))))
             end
           else
-            # Plain string/atom pattern
-            cond_str = str_concat("(strcmp(", str_concat(subj_c, str_concat(", \042", str_concat(pat_lex, "\042) == 0)"))))
+            # Integer/bool/float patterns use == ; string/atom patterns use strcmp
+            if subj_t == 1 or subj_t == 2 or subj_t == 3 do
+              cond_str = str_concat("(", str_concat(subj_c, str_concat(" == ", str_concat(pat_lex, ")"))))
+            else
+              cond_str = str_concat("(strcmp(", str_concat(subj_c, str_concat(", \042", str_concat(pat_lex, "\042) == 0)"))))
+            end
           end
         end
         # If there's a payload binding, wrap arm_val_c in a block that extracts it
