@@ -1,6 +1,6 @@
 import "utils"
 
 def main() do
-  result :: string = utils.greet("Chasm")
+  result :: string = utils.add(2, 3) |> int_to_str()
   print(result)
 end

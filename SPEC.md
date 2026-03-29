@@ -81,7 +81,7 @@ This means expressions that involve `@script` attrs automatically carry script l
 | `bool` | Boolean | `true`, `false` |
 | `string` | Immutable UTF-8 byte string | `"hello"` |
 | `atom` | Compile-time symbol (maps to string constant) | `:idle`, `:running` |
-| `[]T` | Array of element type `T` | `array_new(8)`, `array_fixed(8)`, `array_fixed(8, 0.0)` |
+| `[]T` | Array of element type `T` | `array_new(8)`, `array_new(Bullet, 8)`, `array_fixed(8)`, `array_fixed(8, 0.0)` |
 | `strbuild` | Mutable string builder | `str_builder_new()` |
 | `StructName` | User-defined struct (value type) | `Vec2 { x: 0.0, y: 0.0 }` |
 | `EnumName` | Tagged enum (with optional payload) | `State.Idle` |
@@ -293,6 +293,16 @@ end
 v :: Vec2 = Vec2 { x: 1.0, y: 2.0 }
 ```
 
+Fields may include default values, which are used when array slots are pre-filled via `array_fixed`:
+
+```chasm
+defstruct Bullet do
+  x      :: float = 0.0
+  y      :: float = 0.0
+  active :: int   = 0
+end
+```
+
 Structs are value types — copied on assignment, no heap allocation.
 
 **Struct update** — copy a struct with specific fields overridden using `with`:
@@ -417,7 +427,7 @@ Arms are matched top to bottom. `_` is the catch-all.
 
 Arrays come in two flavors depending on where they live.
 
-### `array_new(N)` — heap-backed, growable
+### `array_new(N)` — heap-backed, growable (primitives)
 
 For local variables and function-scoped data. Grows automatically as elements are pushed.
 
@@ -428,8 +438,28 @@ arr.push(20)
 x = arr.get(1)   # 20
 arr.set(0, 99)
 n = arr.len      # 2
+c = arr.cap      # allocated capacity
 arr.clear()
 ```
+
+### `array_new(Type, N)` — heap-backed, growable (structs)
+
+Pass a struct type name as the first argument to create a typed heap array. `.push`, `.get`, and `.set` operate on the struct type directly — no casting needed.
+
+```chasm
+defstruct Bullet do
+  x     :: float
+  y     :: float
+  speed :: float
+end
+
+bullets = array_new(Bullet, 64)
+bullets.push(Bullet{ x: 0.0, y: 0.0, speed: 5.0 })
+b :: Bullet = bullets.get(0)
+bullets.set(0, b with { x: b.x + b.speed })
+```
+
+Use `array_new(Type, cap)` for local struct collections where the maximum size is not known upfront. Use `array_fixed` for module-level struct arrays.
 
 ### `array_fixed(N)` — arena-backed, fixed capacity
 
@@ -480,6 +510,7 @@ Use `array_fixed` for any module-level array where the maximum size is known upf
 | Method | Description |
 |---|---|
 | `arr.len` | Number of elements currently stored |
+| `arr.cap` | Allocated capacity |
 | `arr.push(v)` | Append a value (`array_fixed` aborts on overflow) |
 | `arr.get(i)` | Read element at index |
 | `arr.set(i, v)` | Write element at index |
