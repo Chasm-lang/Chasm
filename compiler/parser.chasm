@@ -1140,6 +1140,14 @@ defp parse_defstruct(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, 
     pool.set(field_idx, Node{ tag: :field, a: type_idx, b: 0, c: 0, name: fname, line: fline, col: fcol })
     ch.set(cp, field_idx)
     cp = cp + 1
+    # Skip optional default value: = expr
+    if tok_kind(tokens, pos) == :eq do
+      pos = pos + 1
+      r_def = parse_expr(tokens, pool, np, ch, cp, pos)
+      pos   = r_def.pos
+      np    = r_def.np
+      # Do not record the default expr as a child — just advance past it
+    end
     pos = skip_newlines(tokens, pos)
   end
   if tok_kind(tokens, pos) == :end_kw do

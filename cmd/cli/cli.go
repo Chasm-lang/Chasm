@@ -64,7 +64,7 @@ func main() {
 func runCompile(args []string) {
 	path, opts := parseArgs(args)
 	if path == "" {
-		fatalf("usage: chasm compile <file.chasm> [--engine raylib] [--target wasm]\n")
+		fatalf("usage: chasm compile <file.chasm> [--engine raylib|godot] [--target wasm]\n")
 	}
 	outC, err := compileChasm(path, opts)
 	if err != nil {
@@ -240,6 +240,13 @@ func compileChasm(path string, opts options) (string, error) {
 		}
 		combined = append(combined, prelude...)
 		combined = append(combined, '\n')
+	} else if opts.engineGodot {
+		prelude, err := resolveImports(godotChasmPath(), home, visited)
+		if err != nil {
+			fatalf("godot prelude: %v\n", err)
+		}
+		combined = append(combined, prelude...)
+		combined = append(combined, '\n')
 	}
 
 	src, err := resolveImports(path, home, visited)
@@ -376,9 +383,6 @@ func compileSharedLib(path string, opts options) (string, error) {
 		return "", err
 	}
 
-	eng := raylibEngineDir()
-	rl := raylibDir()
-
 	// Remove chasm_rt.h from temp so the generated code's #include "chasm_rt.h"
 	// falls through to -I engine/ and finds the engine's copy.
 	_ = os.Remove(tmpPath("chasm_rt.h"))
@@ -400,14 +404,34 @@ func compileSharedLib(path string, opts options) (string, error) {
 	// Unique path per compile — avoids macOS dylib caching in dlopen.
 	scriptPath := tmpPath(fmt.Sprintf("chasm_script_%d%s", time.Now().UnixNano(), ext))
 
-	args := []string{"cc"}
-	args = append(args, sharedArgs...)
-	args = append(args,
-		"-o", scriptPath,
-		outC,
-		"-I"+eng,
-		"-I"+filepath.Join(rl, "include"),
-	)
+	var args []string
+	if opts.engineGodot {
+		// Godot scripts: include the godot engine dir (for chasm_godot_shim.h)
+		// and the raylib dir (for chasm_rt.h / loader.h).
+		// Force-include the shim so extern fns resolve to gdot_* symbols in GDE.
+		godotDir := godotEngineDir()
+		shimH := filepath.Join(godotDir, "chasm_godot_shim.h")
+		args = []string{"cc"}
+		args = append(args, sharedArgs...)
+		args = append(args,
+			"-o", scriptPath,
+			outC,
+			"-include", shimH,
+			"-I"+godotDir,
+			"-I"+raylibEngineDir(),
+		)
+	} else {
+		eng := raylibEngineDir()
+		rl := raylibDir()
+		args = []string{"cc"}
+		args = append(args, sharedArgs...)
+		args = append(args,
+			"-o", scriptPath,
+			outC,
+			"-I"+eng,
+			"-I"+filepath.Join(rl, "include"),
+		)
+	}
 
 	cc := exec.Command(args[0], args[1:]...)
 	cc.Stdout = os.Stdout
@@ -703,12 +727,21 @@ func raylibChasmPath() string {
 	return filepath.Join(raylibEngineDir(), "raylib.chasm")
 }
 
+func godotEngineDir() string {
+	return filepath.Join(engineDir(), "godot")
+}
+
+func godotChasmPath() string {
+	return filepath.Join(godotEngineDir(), "godot.chasm")
+}
+
 // ---------------------------------------------------------------------------
 // Argument parsing
 // ---------------------------------------------------------------------------
 
 type options struct {
 	engineRaylib bool
+	engineGodot  bool
 	targetWasm   bool
 }
 
@@ -718,8 +751,11 @@ func parseArgs(args []string) (path string, opts options) {
 		case "--engine":
 			if i+1 < len(args) {
 				i++
-				if args[i] == "raylib" {
+				switch args[i] {
+				case "raylib":
 					opts.engineRaylib = true
+				case "godot":
+					opts.engineGodot = true
 				}
 			}
 		case "--target":

@@ -1,20 +1,25 @@
 # Changelog
 
-## [Unreleased] — 2026-03-25 — Windows and Linux raylib engine support
+## [1.6.0] — 2026-03-29 — Godot plugin, typed heap arrays, runtime hardening
 
 ### Summary
 
-The raylib engine (`--engine raylib`) now works on Linux x86_64 and Windows x86_64. Pre-built raylib 5.5 static libraries and headers are bundled in the release archives for both platforms, matching the existing macOS distribution.
+Adds a complete Godot 4 GDExtension plugin (`ChasmComponent`), typed heap arrays via `array_new(Type, cap)`, and several compiler and runtime improvements including a parser bug fix for struct default values, arena overflow abort, and frame GC debug memset.
 
 ### Changes
 
-- **feat**: bundled pre-built raylib 5.5 for Linux x86_64 (`engine/raylib/raylib-5.5_linux/`) and Windows x86_64 (`engine/raylib/raylib-5.5_windows/`) — users get raylib out of the box on all platforms
-- **feat**: Windows installer archive now includes `engine/raylib/raylib-5.5_windows/` (headers + `libraylib.a`) automatically via `cp -r engine` in the release workflow
-- **fix(cli)**: `compileSharedLib` outputs `.dll` on Windows instead of `.so`
-- **fix(cli)**: `buildEngineOnly` and `buildEngineCC` link `-lopengl32 -lgdi32 -lwinmm -lcomdlg32` on Windows instead of the Linux X11 flags
-- **fix(cli)**: all hardcoded `/tmp/` paths replaced with `os.TempDir()` via `tmpPath()` helper — compiler pipeline now works on Windows where `/tmp/` does not exist
-- **fix(engine)**: `loader.h` `CHASM_SCRIPT_EXT` now resolves to `.dll` on Windows (`_WIN32` branch added)
-- **fix(engine)**: `CHASM_RELOAD_SENTINEL` path uses `%TEMP%`/`%TMP%` on Windows via `chasm_sentinel_path()`
+- **feat(godot)**: new `--engine godot` mode and GDExtension plugin (`engine/godot/`, `addons/chasm/`) — attach `.chasm` scripts to Godot 4 nodes via `ChasmComponent`; compile-on-save, hot-reload via mtime polling, 20+ Godot API bindings (`move_and_slide`, `get_axis`, `is_action_just_pressed`, etc.)
+- **feat**: `array_new(Type, cap)` syntax for heap-backed typed struct arrays — emits `chasm_array_new_typed(ctx, cap, sizeof(T))` with full VarElem propagation so `.push`/`.get`/`.set` use typed helpers automatically
+- **feat**: `.cap` accessor on arrays — `arr.cap` returns the allocated capacity
+- **feat(runtime)**: `chasm_alloc` aborts with a diagnostic message on arena overflow instead of silently returning NULL
+- **feat(runtime)**: `ChasmArray` gains `elem_size` field; new `chasm_array_new_typed`, `chasm_array_set_raw`, `chasm_array_get_raw`, `chasm_array_push_raw` for raw element operations
+- **feat(runtime)**: `CHASM_DEBUG` build flag enables `memset(0xCD)` on `chasm_clear_frame` to catch use-after-frame bugs early
+- **fix(codegen)**: `chasm_array_fixed_init_<T>` now sets `elem_size = sizeof(T)` in the returned `ChasmArray`
+- **fix(codegen)**: first-use `name = array.get(i)` on a typed array now infers the correct struct C type instead of `int64_t`
+- **fix(parser)**: `defstruct` fields with default values (e.g. `x :: float = 0.0`) no longer generate spurious `int64_t =;` struct members — the default expression is now correctly skipped
+- **feat(raylib)**: bundled pre-built raylib 5.5 for Linux x86_64 and Windows x86_64 — raylib engine works out of the box on all platforms
+- **fix(cli)**: `compileSharedLib` outputs `.dll` on Windows
+- **fix(cli)**: all hardcoded `/tmp/` paths replaced with `os.TempDir()` — compiler pipeline works on Windows
 
 ---
 

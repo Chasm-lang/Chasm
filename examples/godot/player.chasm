@@ -1,0 +1,46 @@
+# player.chasm — Example Chasm script for a CharacterBody2D player.
+#
+# Setup:
+#   1. Add a CharacterBody2D node to your scene.
+#   2. Add a ChasmComponent child node to it.
+#   3. In the Inspector, set script_path to "res://scripts/player.chasm".
+#   4. The plugin compiles and loads it automatically.
+#
+# Controls: WASD / arrow keys to move, Space to jump.
+
+# ---- State (script lifetime = node lifetime) ----------------------------
+@vel_x :: script = 0.0
+@vel_y :: script = 0.0
+
+# ---- Constants ----------------------------------------------------------
+@speed     :: script = 200.0
+@gravity   :: script = 980.0
+@jump_vel  :: script = -400.0
+@on_floor  :: script = false
+
+fn on_init()
+    print_msg("player script loaded")
+end
+
+fn on_tick(dt: float)
+    # Gravity
+    @vel_y = @vel_y + @gravity * dt
+
+    # Horizontal movement
+    let dir = get_axis("ui_left", "ui_right")
+    @vel_x = dir * @speed
+
+    # Jump
+    if is_action_just_pressed("ui_accept")
+        if @on_floor
+            @vel_y = @jump_vel
+        end
+    end
+
+    set_velocity(@vel_x, @vel_y)
+    move_and_slide()
+
+    # After move_and_slide, re-read actual velocity (wall/floor response)
+    @vel_x = get_vel_x()
+    @vel_y = get_vel_y()
+end

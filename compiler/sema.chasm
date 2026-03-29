@@ -505,7 +505,28 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
   if tag == :call do
     cs = node.a
     cl = node.b
-    ai = 0
+    # array_new(Type, cap) — first arg is a type name, not a variable; skip sema on it.
+    arg_start = 0
+    if node.name == "array_new" do
+      if cl == 2 do
+        type_arg_idx = ch.get(cs)
+        type_node    = pool.get(type_arg_idx)
+        if type_node.tag == :ident do
+          si       = 0
+          is_known = false
+          while si < structs.len do
+            sd = structs.get(si)
+            if sd.name == type_node.name do is_known = true end
+            si = si + 1
+          end
+          if is_known do
+            types.set(type_arg_idx, 0)
+            arg_start = 1
+          end
+        end
+      end
+    end
+    ai = arg_start
     while ai < cl do
       arg_idx = ch.get(cs + ai)
       _t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, arg_idx)

@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -19,7 +21,12 @@ typedef struct {
 
 static inline void *chasm_alloc(ChasmArena *a, size_t n, size_t align) {
     size_t adj = (align - (a->used & (align - 1))) & (align - 1);
-    if (a->used + adj + n > a->cap) return NULL;
+    size_t need = a->used + adj + n;
+    if (need > a->cap) {
+        fprintf(stderr, "chasm: arena overflow (used=%zu, need=%zu, cap=%zu)\n",
+                a->used, need, a->cap);
+        abort();
+    }
     a->used += adj;
     void *p = a->base + a->used;
     a->used += n;
@@ -27,6 +34,9 @@ static inline void *chasm_alloc(ChasmArena *a, size_t n, size_t align) {
 }
 
 static inline void chasm_clear_frame(ChasmCtx *ctx) {
+#ifdef CHASM_DEBUG
+    memset(ctx->frame.base, 0xCD, ctx->frame.used);
+#endif
     ctx->frame.used = 0;
 }
 
@@ -256,10 +266,13 @@ static inline double  chasm_time_now(ChasmCtx *ctx) { (void)ctx; struct timespec
 static inline int64_t chasm_time_ms(ChasmCtx *ctx)  { (void)ctx; struct timespec ts; clock_gettime(CLOCK_REALTIME,&ts); return (int64_t)ts.tv_sec*1000+ts.tv_nsec/1000000; }
 
 /* ---- arrays ------------------------------------------------------ */
-typedef struct { void *data; int64_t len; int64_t cap; } ChasmArray;
+typedef struct { void *data; int64_t len; int64_t cap; int64_t elem_size; } ChasmArray;
+
+/* ---- scalar (int64_t) array --------------------------------------- */
 static inline ChasmArray chasm_array_new(ChasmCtx *ctx, int64_t cap) {
-    void *d = chasm_alloc(&ctx->frame, (size_t)(cap > 0 ? cap : 8) * 8, 8);
-    return (ChasmArray){d, 0, cap > 0 ? cap : 8};
+    if (cap <= 0) cap = 8;
+    void *d = chasm_alloc(&ctx->frame, (size_t)cap * 8, 8);
+    return (ChasmArray){d, 0, cap, 8};
 }
 static inline void    chasm_array_push(ChasmCtx *ctx, ChasmArray *a, int64_t v)          { (void)ctx; if(a->len<a->cap) ((int64_t*)a->data)[a->len++]=v; }
 static inline int64_t chasm_array_pop (ChasmCtx *ctx, ChasmArray *a)                     { (void)ctx; return a->len>0?((int64_t*)a->data)[--a->len]:0; }
@@ -267,6 +280,36 @@ static inline int64_t chasm_array_get (ChasmCtx *ctx, ChasmArray *a, int64_t i) 
 static inline void    chasm_array_set (ChasmCtx *ctx, ChasmArray *a, int64_t i, int64_t v){ (void)ctx; if(i>=0&&i<a->len)((int64_t*)a->data)[i]=v; }
 static inline int64_t chasm_array_len (ChasmCtx *ctx, ChasmArray *a)                     { (void)ctx; return a->len; }
 static inline void    chasm_array_clear(ChasmCtx *ctx, ChasmArray *a)                    { (void)ctx; a->len=0; }
+
+/* ---- typed (struct) array — arena-backed, fixed capacity ---------- */
+static inline ChasmArray chasm_array_new_typed(ChasmCtx *ctx, int64_t cap, int64_t elem_size) {
+    if (cap <= 0 || elem_size <= 0) return (ChasmArray){NULL, 0, 0, elem_size};
+    void *d = chasm_alloc(&ctx->frame, (size_t)cap * (size_t)elem_size, 8);
+    return (ChasmArray){d, 0, cap, elem_size};
+}
+static inline void chasm_array_set_raw(ChasmArray *a, int64_t i, const void *val) {
+    if (i >= 0 && i < a->len)
+        memcpy((char*)a->data + (size_t)i * (size_t)a->elem_size, val,
+               (size_t)a->elem_size);
+}
+static inline void chasm_array_get_raw(ChasmArray *a, int64_t i, void *out) {
+    if (i >= 0 && i < a->len)
+        memcpy(out, (char*)a->data + (size_t)i * (size_t)a->elem_size,
+               (size_t)a->elem_size);
+    else
+        memset(out, 0, (size_t)a->elem_size);
+}
+static inline void chasm_array_push_raw(ChasmCtx *ctx, ChasmArray *a, const void *val) {
+    (void)ctx;
+    if (a->len >= a->cap) {
+        fprintf(stderr, "chasm: typed array overflow (cap=%lld, elem_size=%lld)\n",
+                (long long)a->cap, (long long)a->elem_size);
+        abort();
+    }
+    memcpy((char*)a->data + (size_t)a->len * (size_t)a->elem_size, val,
+           (size_t)a->elem_size);
+    a->len++;
+}
 
 /* ---- range / for-in support -------------------------------------- */
 static inline ChasmArray chasm_range(ChasmCtx *ctx, int64_t lo, int64_t hi) {
@@ -281,8 +324,7 @@ static inline ChasmArray chasm_range(ChasmCtx *ctx, int64_t lo, int64_t hi) {
 static inline ChasmArray chasm_array_fixed_in(ChasmArena *arena, int64_t cap) {
     if (cap <= 0) cap = 8;
     void *d = chasm_alloc(arena, (size_t)cap * 8, 8);
-    if (!d) return (ChasmArray){NULL, 0, 0};
-    return (ChasmArray){d, 0, cap};
+    return (ChasmArray){d, 0, cap, 8};
 }
 static inline void chasm_array_push_fixed(ChasmCtx *ctx, ChasmArray *a, int64_t v) {
     (void)ctx;
@@ -292,8 +334,7 @@ static inline void chasm_array_push_fixed(ChasmCtx *ctx, ChasmArray *a, int64_t 
 static inline ChasmArray chasm_array_fixed_in_f(ChasmArena *arena, int64_t cap) {
     if (cap <= 0) cap = 8;
     void *d = chasm_alloc(arena, (size_t)cap * sizeof(double), 8);
-    if (!d) return (ChasmArray){NULL, 0, 0};
-    return (ChasmArray){d, 0, cap};
+    return (ChasmArray){d, 0, cap, (int64_t)sizeof(double)};
 }
 static inline void chasm_array_push_fixed_f(ChasmCtx *ctx, ChasmArray *a, double v) {
     (void)ctx;
@@ -310,8 +351,12 @@ static inline void chasm_array_set_f(ChasmCtx *ctx, ChasmArray *a, int64_t i, do
 static inline ChasmArray chasm_array_new_in(ChasmArena *arena, int64_t cap) {
     if (cap <= 0) cap = 8;
     void *d = chasm_alloc(arena, (size_t)cap * 8, 8);
-    if (!d) return (ChasmArray){NULL, 0, 0};
-    return (ChasmArray){d, 0, cap};
+    return (ChasmArray){d, 0, cap, 8};
+}
+static inline ChasmArray chasm_array_fixed_in_raw(ChasmArena *arena, int64_t cap, int64_t elem_size) {
+    if (cap <= 0 || elem_size <= 0) return (ChasmArray){NULL, 0, 0, elem_size};
+    void *d = chasm_alloc(arena, (size_t)cap * (size_t)elem_size, 8);
+    return (ChasmArray){d, 0, cap, elem_size};
 }
 
 /* ---- i/o --------------------------------------------------------- */

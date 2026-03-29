@@ -224,6 +224,27 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
         return str_concat("chasm_exit(ctx, ", str_concat(args_str, ")"))
       end
     end
+    # array_new(Type, cap) — typed heap array
+    if fn_name == "array_new" do
+      if cl == 2 do
+        type_arg_idx = ch.get(cs)
+        type_node    = pool.get(type_arg_idx)
+        if type_node.tag == :ident do
+          si        = 0
+          found_tid = 0
+          while si < structs.len do
+            sd = structs.get(si)
+            if sd.name == type_node.name do found_tid = sd.type_id end
+            si = si + 1
+          end
+          if found_tid > 0 do
+            cap_arg_idx = ch.get(cs + 1)
+            cap_c       = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, cap_arg_idx)
+            return str_concat("chasm_array_new_typed(ctx, ", str_concat(cap_c, str_concat(", sizeof(", str_concat(type_node.name, "))"))))
+          end
+        end
+      end
+    end
     # Default: chasm_name(ctx, args)
     if cl == 0 do
       return str_concat("chasm_", str_concat(fn_name, "(ctx)"))
@@ -240,6 +261,9 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
 
     if mn == "len" do
       return str_concat("(", str_concat(recv_c, ").len"))
+    end
+    if mn == "cap" do
+      return str_concat("(", str_concat(recv_c, ").cap"))
     end
 
     # Determine array element suffix from var_elems
@@ -650,6 +674,30 @@ defp emit_stmt(pool :: []Node, ch :: []int, types :: []int,
         end
       end
     end
+    # Fallback: detect array_new(Type, cap) on RHS without annotation
+    if ve_declared(var_elems, ve_len, node.name) == false do
+      rhs_node = pool.get(node.b)
+      if rhs_node.tag == :call do
+        if rhs_node.name == "array_new" do
+          if rhs_node.b == 2 do
+            type_arg_idx = ch.get(rhs_node.a)
+            type_node    = pool.get(type_arg_idx)
+            if type_node.tag == :ident do
+              si     = 0
+              et_tid = 0
+              while si < structs.len do
+                sd = structs.get(si)
+                if sd.name == type_node.name do et_tid = sd.type_id end
+                si = si + 1
+              end
+              if et_tid > 0 do
+                ve_len = ve_push(var_elems, ve_len, node.name, et_tid)
+              end
+            end
+          end
+        end
+      end
+    end
     if ve_declared(var_elems, ve_len, node.name) == false do
       ve_len = ve_push(var_elems, ve_len, node.name, 0)
     end
@@ -670,7 +718,44 @@ defp emit_stmt(pool :: []Node, ch :: []int, types :: []int,
         # types[idx] holds the assign-node type (set by sema); types[node.a] (ident) is 0.
         val_t  = types.get(idx)
         type_c = c_type(val_t, structs)
-        ve_len = ve_push(var_elems, ve_len, nm, 0)
+        # Detect RHS patterns that tell us more about the variable type.
+        # (1) array_new(Type, cap) — register elem type for the new array.
+        # (2) array.get(i) / array_fixed_init_T — infer struct type from receiver's VarElem.
+        et_assign = 0
+        rhs_nd = pool.get(node.b)
+        if rhs_nd.tag == :call do
+          if rhs_nd.name == "array_new" do
+            if rhs_nd.b == 2 do
+              ta_idx = ch.get(rhs_nd.a)
+              ta_nd  = pool.get(ta_idx)
+              if ta_nd.tag == :ident do
+                si2 = 0
+                while si2 < structs.len do
+                  sd2 = structs.get(si2)
+                  if sd2.name == ta_nd.name do et_assign = sd2.type_id end
+                  si2 = si2 + 1
+                end
+              end
+            end
+          end
+        end
+        # (2) rhs is .get(i) on a typed array — use the array's elem type as var type
+        if rhs_nd.tag == :method_call do
+          if rhs_nd.name == "get" do
+            recv_nd = pool.get(rhs_nd.a)
+            recv_nm = ""
+            if recv_nd.tag == :ident do recv_nm = recv_nd.name end
+            if recv_nd.tag == :at_ref do recv_nm = str_slice(recv_nd.name, 1, str_len(recv_nd.name)) end
+            if str_len(recv_nm) > 0 do
+              recv_tid = ve_lookup(var_elems, ve_len, recv_nm)
+              if recv_tid > 9 do
+                val_t  = recv_tid
+                type_c = c_type(recv_tid, structs)
+              end
+            end
+          end
+        end
+        ve_len = ve_push(var_elems, ve_len, nm, et_assign)
         print(str_concat(ind, str_concat(type_c, str_concat(" ", str_concat(nm, str_concat(" = ", str_concat(val_c, ";")))))))
       end
     end
@@ -822,9 +907,9 @@ defp emit_array_helpers(sn :: string) do
   print(str_concat("static inline ChasmArray chasm_array_fixed_init_", str_concat(sn, str_concat("(ChasmArena *arena, int64_t cap, ", str_concat(sn, " def) {")))))
   print("    if (cap <= 0) cap = 8;")
   print(str_concat("    void *d = chasm_alloc(arena, (size_t)cap * sizeof(", str_concat(sn, str_concat("), _Alignof(", str_concat(sn, "));")))))
-  print("    if (!d) return (ChasmArray){NULL, 0, cap};")
+  print(str_concat("    if (!d) return (ChasmArray){NULL, 0, cap, (int64_t)sizeof(", str_concat(sn, ")};")))
   print(str_concat("    ", str_concat(sn, str_concat(" *p = (", str_concat(sn, "*)d; for (int64_t _i = 0; _i < cap; _i++) p[_i] = def;")))))
-  print("    return (ChasmArray){d, cap, cap};")
+  print(str_concat("    return (ChasmArray){d, cap, cap, (int64_t)sizeof(", str_concat(sn, ")};")))
   print("}")
   print("")
 end

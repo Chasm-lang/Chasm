@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -36,7 +37,12 @@ typedef struct {
 
 static inline void *chasm_alloc(ChasmArena *a, size_t n, size_t align) {
     size_t adj = (align - (a->used & (align - 1))) & (align - 1);
-    if (a->used + adj + n > a->cap) return NULL;
+    size_t need = a->used + adj + n;
+    if (need > a->cap) {
+        fprintf(stderr, "chasm: arena overflow (used=%zu, need=%zu, cap=%zu)\n",
+                a->used, need, a->cap);
+        abort();
+    }
     a->used += adj;
     void *p = a->base + a->used;
     a->used += n;
@@ -71,6 +77,11 @@ static inline void chasm_clear_frame(ChasmCtx *ctx) {
     _ChasmFH *fh = _chasm_fh(ctx);
     for (int i = 0; i < fh->count; i++) { free(fh->ptrs[i]); fh->ptrs[i] = NULL; }
     fh->count = 0;
+#ifdef CHASM_DEBUG
+    /* Poison freed frame memory so stale reads produce garbage, not silently
+     * valid-looking data.  0xCD is the classic "uninitialized" sentinel. */
+    memset(ctx->frame.base, 0xCD, ctx->frame.used);
+#endif
     ctx->frame.used = 0;
 }
 
@@ -104,7 +115,6 @@ static inline const char *chasm_str_to_persistent(ChasmCtx *ctx, const char *s) 
 /* Chasm standard library                                             */
 /* ------------------------------------------------------------------ */
 #include <math.h>
-#include <stdio.h>
 #include <time.h>
 
 /* ---- math -------------------------------------------------------- */
@@ -298,12 +308,19 @@ static inline double  chasm_time_now(ChasmCtx *ctx) { (void)ctx; struct timespec
 static inline int64_t chasm_time_ms(ChasmCtx *ctx)  { (void)ctx; struct timespec ts; clock_gettime(CLOCK_REALTIME,&ts); return (int64_t)ts.tv_sec*1000+ts.tv_nsec/1000000; }
 
 /* ---- arrays ------------------------------------------------------ */
-typedef struct { void *data; int64_t len; int64_t cap; } ChasmArray;
+/* elem_size stores the element byte-size for typed (struct) arrays.
+ * Scalar int/bool arrays use elem_size=8; float arrays use elem_size=8.
+ * Struct arrays use elem_size=sizeof(Struct); codegen emits typed wrappers
+ * (chasm_array_get_Foo, chasm_array_set_Foo, chasm_array_push_Foo) that
+ * delegate to the raw ops below. */
+typedef struct { void *data; int64_t len; int64_t cap; int64_t elem_size; } ChasmArray;
+
+/* ---- scalar (int64_t) array ---------------------------------------- */
 static inline ChasmArray chasm_array_new(ChasmCtx *ctx, int64_t cap) {
-    if (cap <= 0) return (ChasmArray){NULL, 0, 0};
+    if (cap <= 0) return (ChasmArray){NULL, 0, 0, 8};
     void *d = malloc((size_t)cap * 8);
     chasm_fh_register(ctx, d);  /* freed by chasm_clear_frame */
-    return (ChasmArray){d, 0, cap};
+    return (ChasmArray){d, 0, cap, 8};
 }
 static inline void chasm_array_push(ChasmCtx *ctx, ChasmArray *a, int64_t v) {
     if (a->len >= a->cap) {
@@ -323,6 +340,46 @@ static inline int64_t chasm_array_get (ChasmCtx *ctx, ChasmArray *a, int64_t i) 
 static inline void    chasm_array_set (ChasmCtx *ctx, ChasmArray *a, int64_t i, int64_t v){ (void)ctx; if(i>=0&&i<a->len)((int64_t*)a->data)[i]=v; }
 static inline int64_t chasm_array_len (ChasmCtx *ctx, ChasmArray *a)                     { (void)ctx; return a->len; }
 static inline void    chasm_array_clear(ChasmCtx *ctx, ChasmArray *a)                    { (void)ctx; a->len=0; }
+
+/* ---- typed (struct) array ----------------------------------------- */
+/* Constructor: pass sizeof(YourStruct) as elem_size.
+ * Codegen emits per-struct wrappers that call these. */
+static inline ChasmArray chasm_array_new_typed(ChasmCtx *ctx, int64_t cap, int64_t elem_size) {
+    if (cap <= 0 || elem_size <= 0) return (ChasmArray){NULL, 0, 0, elem_size};
+    void *d = malloc((size_t)cap * (size_t)elem_size);
+    chasm_fh_register(ctx, d);
+    return (ChasmArray){d, 0, cap, elem_size};
+}
+
+static inline void chasm_array_set_raw(ChasmArray *a, int64_t i, const void *val) {
+    if (i >= 0 && i < a->len)
+        memcpy((char*)a->data + (size_t)i * (size_t)a->elem_size, val,
+               (size_t)a->elem_size);
+}
+static inline void chasm_array_get_raw(ChasmArray *a, int64_t i, void *out) {
+    if (i >= 0 && i < a->len)
+        memcpy(out, (char*)a->data + (size_t)i * (size_t)a->elem_size,
+               (size_t)a->elem_size);
+    else
+        memset(out, 0, (size_t)a->elem_size);
+}
+static inline void chasm_array_push_raw(ChasmCtx *ctx, ChasmArray *a, const void *val) {
+    if (a->len >= a->cap) {
+        a->cap = a->cap * 2 + 8;
+        void *old = a->data;
+        a->data = realloc(a->data, (size_t)a->cap * (size_t)a->elem_size);
+        if (a->data != old) {
+            _ChasmFH *fh = _chasm_fh(ctx);
+            for (int _i = 0; _i < fh->count; _i++)
+                if (fh->ptrs[_i] == old) { fh->ptrs[_i] = a->data; break; }
+        }
+    }
+    if (a->data) {
+        memcpy((char*)a->data + (size_t)a->len * (size_t)a->elem_size, val,
+               (size_t)a->elem_size);
+        a->len++;
+    }
+}
 
 /* ---- string builder ---------------------------------------------- */
 typedef struct { char *buf; int64_t len; int64_t cap; } ChasmStrBuilder;

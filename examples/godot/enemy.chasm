@@ -1,0 +1,40 @@
+# enemy.chasm — Example patrol enemy for a CharacterBody2D.
+#
+# The enemy walks left and right between two bounds, reversing on collision.
+
+@x       :: script = 0.0
+@y       :: script = 0.0
+@dir     :: script = 1.0
+@speed   :: script = 80.0
+@gravity :: script = 500.0
+@vel_y   :: script = 0.0
+
+@bound_left  :: script = -200.0
+@bound_right :: script =  200.0
+
+fn on_init()
+    @x = get_pos_x()
+    @y = get_pos_y()
+    @bound_left  = @x - 200.0
+    @bound_right = @x + 200.0
+    print_msg("enemy script loaded")
+end
+
+fn on_tick(dt: float)
+    @vel_y = @vel_y + @gravity * dt
+    @x = @x + @dir * @speed * dt
+
+    if @x < @bound_left
+        @x = @bound_left
+        @dir = 1.0
+    end
+    if @x > @bound_right
+        @x = @bound_right
+        @dir = -1.0
+    end
+
+    set_velocity(@dir * @speed, @vel_y)
+    move_and_slide()
+    @vel_y = get_vel_y()
+    @x = get_pos_x()
+end

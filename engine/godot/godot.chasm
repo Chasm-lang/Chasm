@@ -1,0 +1,50 @@
+# godot.chasm — Godot API prelude for Chasm scripts.
+#
+# Automatically prepended when compiling with --engine godot.
+# These map to C functions in chasm_godot_shim.h / chasm_gde.c.
+#
+# Usage in a script:
+#   @x :: script = 0.0
+#   @y :: script = 0.0
+#
+#   fn on_init()
+#     @x = get_pos_x()
+#     @y = get_pos_y()
+#   end
+#
+#   fn on_tick(dt: float)
+#     if is_action_pressed("ui_right")
+#       @x = @x + 200.0 * dt
+#     end
+#     set_position(@x, @y)
+#   end
+
+# ---- Position -----------------------------------------------------------
+extern fn get_pos_x() -> float                               = "gdot_get_pos_x"
+extern fn get_pos_y() -> float                               = "gdot_get_pos_y"
+extern fn set_position(x: float, y: float) -> void           = "gdot_set_position"
+
+# ---- Physics (CharacterBody2D) ------------------------------------------
+extern fn move_and_slide() -> void                           = "gdot_move_and_slide"
+extern fn set_velocity(vx: float, vy: float) -> void         = "gdot_set_velocity"
+extern fn get_vel_x() -> float                               = "gdot_get_vel_x"
+extern fn get_vel_y() -> float                               = "gdot_get_vel_y"
+
+# ---- Signals ------------------------------------------------------------
+extern fn emit_signal(name: str) -> void                     = "gdot_emit_signal"
+
+# ---- Scene tree ---------------------------------------------------------
+extern fn get_node(path: str) -> int                         = "gdot_get_node"
+
+# ---- Audio --------------------------------------------------------------
+extern fn play_audio(path: str) -> void                      = "gdot_play_audio"
+
+# ---- Input --------------------------------------------------------------
+extern fn is_action_pressed(action: str) -> bool             = "gdot_is_action_pressed"
+extern fn is_action_just_pressed(action: str) -> bool        = "gdot_is_action_just_pressed"
+extern fn is_action_just_released(action: str) -> bool       = "gdot_is_action_just_released"
+extern fn get_axis(neg: str, pos: str) -> float              = "gdot_get_axis"
+
+# ---- Logging ------------------------------------------------------------
+extern fn print_msg(msg: str) -> void                        = "gdot_print"
+extern fn print_err(msg: str) -> void                        = "gdot_print_err"
