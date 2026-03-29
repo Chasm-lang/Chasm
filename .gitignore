@@ -11,3 +11,4 @@ editors/vscode/*.vsix
 engine/raylib/.chasm_engine_cache
 # Generated C output from chasm compile
 examples/**/*.c
+testdata
