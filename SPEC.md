@@ -510,7 +510,7 @@ Use `array_fixed` for any module-level array where the maximum size is known upf
 | Method | Description |
 |---|---|
 | `arr.len` | Number of elements currently stored |
-| `arr.cap` | Allocated capacity |
+| `arr.cap` | Allocated capacity — how many elements fit before the array must grow (`array_new`) or abort (`array_fixed`) |
 | `arr.push(v)` | Append a value (`array_fixed` aborts on overflow) |
 | `arr.get(i)` | Read element at index |
 | `arr.set(i, v)` | Write element at index |
