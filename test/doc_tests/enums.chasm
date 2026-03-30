@@ -1,0 +1,56 @@
+enum State { Idle, Running, Jumping, Dead }
+enum Dir { North, South, East, West }
+enum Shape { Circle(float), Rect(float, float), Point }
+
+@state :: script = State.Idle
+
+if @state == State.Idle do
+  print("waiting")
+end
+
+defp dx(d :: Dir) :: float do
+  case d do
+    when East  ->  1.0
+    when West  -> -1.0
+    _          ->  0.0
+  end
+end
+
+defp dy(d :: Dir) :: float do
+  case d do
+    when South ->  1.0
+    when North -> -1.0
+    _          ->  0.0
+  end
+end
+
+print(dx(Dir.East))    # 1
+print(dx(Dir.North))   # 0
+print(dy(Dir.South))   # 1
+print(dy(Dir.West))    # 0
+
+defp tier(score :: int) :: string do
+  case score / 100 do
+    when 0 -> "bronze"
+    when 1 -> "silver"
+    when 2 -> "gold"
+    _      -> "legend"
+  end
+end
+
+print(tier(50))    # bronze
+print(tier(150))   # silver
+print(tier(250))   # gold
+print(tier(999))   # legend
+
+defp color_for(s :: atom) :: int do
+  case s do
+    when :healthy  -> 0x00ff00ff
+    when :hurt     -> 0xff8800ff
+    when :critical -> 0xff0000ff
+    _              -> 0xffffffff
+  end
+end
+
+print(color_for(:healthy))    # 16711935
+print(color_for(:unknown))    # 4294967295

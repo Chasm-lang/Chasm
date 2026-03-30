@@ -611,10 +611,24 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
             end
           else
             # Integer/bool/float patterns use == ; string/atom patterns use strcmp
+            # Enum types (subj_t > 9) use == with EnumName_Variant constant
             if subj_t == 1 or subj_t == 2 or subj_t == 3 do
               cond_str = str_concat("(", str_concat(subj_c, str_concat(" == ", str_concat(pat_lex, ")"))))
             else
-              cond_str = str_concat("(strcmp(", str_concat(subj_c, str_concat(", \042", str_concat(pat_lex, "\042) == 0)"))))
+              if subj_t > 9 do
+                # Look up enum name from type id
+                enum_name_m = ""
+                si_m = 0
+                while si_m < structs.len do
+                  sd_m = structs.get(si_m)
+                  if sd_m.type_id == subj_t do enum_name_m = sd_m.name end
+                  si_m = si_m + 1
+                end
+                enum_const_m = str_concat(enum_name_m, str_concat("_", pat_lex))
+                cond_str = str_concat("(", str_concat(subj_c, str_concat(" == ", str_concat(enum_const_m, ")"))))
+              else
+                cond_str = str_concat("(strcmp(", str_concat(subj_c, str_concat(", \042", str_concat(pat_lex, "\042) == 0)"))))
+              end
             end
           end
         end
@@ -639,6 +653,47 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
             end
           end
           extract = str_concat(subj_c, str_concat(".", str_concat(variant_name2, ".v")))
+          # For multi-payload variants, use .v0 instead of .v
+          # Check by looking up the enum variant in structs
+          si_ep = 0
+          while si_ep < structs.len do
+            sd_ep = structs.get(si_ep)
+            sn_ep = pool.get(sd_ep.node_idx)
+            if sn_ep.tag == :enum_decl do
+              vs_ep = sn_ep.a
+              vl_ep = sn_ep.b
+              vi_ep = 0
+              while vi_ep < vl_ep do
+                vnode_ep = pool.get(ch.get(vs_ep + vi_ep))
+                raw_ep   = vnode_ep.name
+                # Check if this variant name matches and has comma in payload
+                colon_ep = -1
+                ci_ep = 0
+                while ci_ep < str_len(raw_ep) do
+                  if str_char_at(raw_ep, ci_ep) == 58 do colon_ep = ci_ep end
+                  ci_ep = ci_ep + 1
+                end
+                if colon_ep >= 0 do
+                  vn_ep = str_slice(raw_ep, 0, colon_ep)
+                  pt_ep = str_slice(raw_ep, colon_ep + 1, str_len(raw_ep))
+                  if vn_ep == variant_name2 do
+                    # Check for comma in payload types
+                    has_comma_ep = false
+                    ci_ep2 = 0
+                    while ci_ep2 < str_len(pt_ep) do
+                      if str_char_at(pt_ep, ci_ep2) == 44 do has_comma_ep = true end
+                      ci_ep2 = ci_ep2 + 1
+                    end
+                    if has_comma_ep do
+                      extract = str_concat(subj_c, str_concat(".", str_concat(variant_name2, ".v0")))
+                    end
+                  end
+                end
+                vi_ep = vi_ep + 1
+              end
+            end
+            si_ep = si_ep + 1
+          end
           # Emit as a GNU statement expression: ({ type bind = extract; arm_val; })
           arm_val_c = str_concat("({ __auto_type ", str_concat(bind_name, str_concat(" = ", str_concat(extract, str_concat("; ", str_concat(arm_val_c, "; })"))))))
         end
@@ -1111,8 +1166,38 @@ defp emit_enum_def(pool :: []Node, ch :: []int, structs :: []StructDef, decl_idx
         ci = ci + 1
       end
       if str_len(payload_types) > 0 do
-        # Single payload field named 'v' with the payload type
-        print(str_concat("    struct { ", str_concat(payload_types, str_concat(" v; } ", str_concat(vname, ";")))))
+        # Count commas to determine number of payload fields
+        field_count = 1
+        ci2 = 0
+        while ci2 < str_len(payload_types) do
+          if str_char_at(payload_types, ci2) == 44 do field_count = field_count + 1 end
+          ci2 = ci2 + 1
+        end
+        if field_count == 1 do
+          # Single payload: struct { type v; } Variant;
+          print(str_concat("    struct { ", str_concat(payload_types, str_concat(" v; } ", str_concat(vname, ";")))))
+        else
+          # Multi payload: struct { type0 v0; type1 v1; ... } Variant;
+          fields_str = ""
+          fi2 = 0
+          start2 = 0
+          ci3 = 0
+          while ci3 <= str_len(payload_types) do
+            is_end3   = ci3 == str_len(payload_types)
+            is_comma3 = false
+            if ci3 < str_len(payload_types) do
+              if str_char_at(payload_types, ci3) == 44 do is_comma3 = true end
+            end
+            if is_end3 or is_comma3 do
+              type_name3 = str_slice(payload_types, start2, ci3)
+              fields_str = str_concat(fields_str, str_concat(type_name3, str_concat(" v", str_concat(int_to_str(fi2), "; "))))
+              fi2 = fi2 + 1
+              start2 = ci3 + 1
+            end
+            ci3 = ci3 + 1
+          end
+          print(str_concat("    struct { ", str_concat(fields_str, str_concat("} ", str_concat(vname, ";")))))
+        end
       end
       i = i + 1
     end
@@ -1137,7 +1222,44 @@ defp emit_enum_def(pool :: []Node, ch :: []int, structs :: []StructDef, decl_idx
         ci = ci + 1
       end
       if str_len(payload_types) > 0 do
-        print(str_concat("#define ", str_concat(ename, str_concat("_make_", str_concat(vname, str_concat("(val) (", str_concat(ename, str_concat("){ .tag = ", str_concat(ename, str_concat("_", str_concat(vname, str_concat(", .", str_concat(vname, str_concat(".v = (val) }", ""))))))))))))))
+        # Count fields
+        field_count2 = 1
+        ci4 = 0
+        while ci4 < str_len(payload_types) do
+          if str_char_at(payload_types, ci4) == 44 do field_count2 = field_count2 + 1 end
+          ci4 = ci4 + 1
+        end
+        if field_count2 == 1 do
+          # Single: #define Enum_make_V(val) (Enum){ .tag=Enum_V, .V.v=(val) }
+          print(str_concat("#define ", str_concat(ename, str_concat("_make_", str_concat(vname, str_concat("(val) (", str_concat(ename, str_concat("){ .tag = ", str_concat(ename, str_concat("_", str_concat(vname, str_concat(", .", str_concat(vname, str_concat(".v = (val) }", ""))))))))))))))
+        else
+          # Multi: build param list (v0,v1,...) and assignment list
+          params_str = ""
+          assign_str = ""
+          fi3 = 0
+          start3 = 0
+          ci5 = 0
+          while ci5 <= str_len(payload_types) do
+            is_end5   = ci5 == str_len(payload_types)
+            is_comma5 = false
+            if ci5 < str_len(payload_types) do
+              if str_char_at(payload_types, ci5) == 44 do is_comma5 = true end
+            end
+            if is_end5 or is_comma5 do
+              vfield = str_concat("v", int_to_str(fi3))
+              if fi3 > 0 do
+                params_str = str_concat(params_str, ",")
+                assign_str = str_concat(assign_str, ", ")
+              end
+              params_str = str_concat(params_str, vfield)
+              assign_str = str_concat(assign_str, str_concat(".", str_concat(vname, str_concat(".", str_concat(vfield, str_concat(" = (", str_concat(vfield, ")")))))))
+              fi3 = fi3 + 1
+              start3 = ci5 + 1
+            end
+            ci5 = ci5 + 1
+          end
+          print(str_concat("#define ", str_concat(ename, str_concat("_make_", str_concat(vname, str_concat("(", str_concat(params_str, str_concat(") (", str_concat(ename, str_concat("){ .tag = ", str_concat(ename, str_concat("_", str_concat(vname, str_concat(", ", str_concat(assign_str, " }")))))))))))))))))
+        end
       end
       i = i + 1
     end
@@ -1364,7 +1486,7 @@ defp emit_fn(pool :: []Node, ch :: []int, types :: []int,
                      last_node.tag == :struct_lit or last_node.tag == :match_expr or
                      last_node.tag == :pipe_expr or last_node.tag == :if_stmt
       is_void_ret = ret_c == "void"
-      already_returns = last_node.tag == :return_stmt or last_node.tag == :if_stmt or
+      already_returns = last_node.tag == :return_stmt or
                         last_node.tag == :while_stmt or last_node.tag == :for_stmt
       if is_expr_stmt and is_void_ret == false and already_returns == false do
         ec = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, last_child)

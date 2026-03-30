@@ -482,10 +482,29 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
   if tag == :ident do
     tid = sym_lookup(syms, sym_len, node.name)
     if sym_contains(syms, sym_len, node.name) == false do
-      snip  = extract_snippet(src, node.line)
-      caret = make_caret(node.col, str_len(node.name))
-      d :: Diagnostic = Diagnostic{ code: "E001", category: "undefined variable", file: file, line: node.line, col: node.col, message: str_concat("undefined variable `", str_concat(node.name, "`")), snippet: snip, caret: caret, help: str_concat("`", str_concat(node.name, "` is not defined in this scope")) }
-      dc = diag_emit(dc, d)
+      # Suppress E001 if the name is a known struct/enum type (used as namespace: State.Idle)
+      is_type_name = false
+      si_chk = 0
+      while si_chk < structs.len do
+        sd_chk = structs.get(si_chk)
+        if sd_chk.name == node.name do is_type_name = true end
+        si_chk = si_chk + 1
+      end
+      if is_type_name == false do
+        snip  = extract_snippet(src, node.line)
+        caret = make_caret(node.col, str_len(node.name))
+        d :: Diagnostic = Diagnostic{ code: "E001", category: "undefined variable", file: file, line: node.line, col: node.col, message: str_concat("undefined variable `", str_concat(node.name, "`")), snippet: snip, caret: caret, help: str_concat("`", str_concat(node.name, "` is not defined in this scope")) }
+        dc = diag_emit(dc, d)
+      end
+      if is_type_name do
+        # Return the struct/enum type id so field_get can resolve EnumName.Variant
+        si_t = 0
+        while si_t < structs.len do
+          sd_t = structs.get(si_t)
+          if sd_t.name == node.name do tid = sd_t.type_id end
+          si_t = si_t + 1
+        end
+      end
     end
     types.set(idx, tid)
     return tid
@@ -726,6 +745,22 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
     end
     ft    = field_lookup(fields, obj_t, node.name)
     if ft == 0 and obj_t > 9 do
+      # Check if this is an enum type — enum variants are not struct fields, suppress E007
+      is_enum = false
+      si_e = 0
+      while si_e < structs.len do
+        sd_e = structs.get(si_e)
+        if sd_e.type_id == obj_t do
+          sn_e = pool.get(sd_e.node_idx)
+          if sn_e.tag == :enum_decl do is_enum = true end
+        end
+        si_e = si_e + 1
+      end
+      if is_enum do
+        # Enum variant access: return the enum's type id
+        types.set(idx, obj_t)
+        return obj_t
+      end
       # E007: undefined struct field
       struct_name = ""
       si = 0
