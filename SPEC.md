@@ -597,6 +597,20 @@ sub = s.slice(6, 11)  # "world"
 | `deg_to_rad(d)` | `float` | Degrees to radians |
 | `rad_to_deg(r)` | `float` | Radians to degrees |
 
+### Easing
+
+| Function | Returns | Description |
+|---|---|---|
+| `ease_in(t)` | `float` | Quadratic ease-in (`t²`) |
+| `ease_out(t)` | `float` | Quadratic ease-out |
+| `ease_in_out(t)` | `float` | Quadratic ease-in-out |
+| `ease_in_cubic(t)` | `float` | Cubic ease-in (`t³`) |
+| `ease_out_cubic(t)` | `float` | Cubic ease-out |
+| `ease_in_out_cubic(t)` | `float` | Cubic ease-in-out |
+| `ease_out_bounce(t)` | `float` | Bounce ease-out |
+| `ease_in_elastic(t)` | `float` | Elastic ease-in |
+| `ease_out_elastic(t)` | `float` | Elastic ease-out |
+
 ### Vector math
 
 | Function | Returns | Description |
@@ -691,7 +705,7 @@ All public functions and extern declarations from the imported file become avail
 ## Grammar (Informal)
 
 ```
-file          ::= (attr_decl | fn_decl | struct_decl | enum_decl | extern_decl | import_decl)*
+file          ::= (attr_decl | fn_decl | struct_decl | enum_decl | extern_decl | import_decl | stmt)*
 
 attr_decl     ::= '@' IDENT '::' lifetime '=' expr
 
@@ -728,9 +742,49 @@ add_expr      ::= mul_expr (('+' | '-') mul_expr)*
 mul_expr      ::= unary_expr (('*' | '/') unary_expr)*
 unary_expr    ::= ('-' | 'not') unary_expr | postfix_expr
 postfix_expr  ::= primary_expr ('.' IDENT ('(' args ')')? | '[' expr ']')* ('with' '{' field_init* '}')?
-primary_expr  ::= literal | IDENT | '@' IDENT | call_expr | struct_lit | array_lit | '(' expr ')'
+primary_expr  ::= literal | IDENT | '@' IDENT | call_expr | struct_lit | array_lit | '(' expr ')' | if_expr
 
-type          ::= 'int' | 'float' | 'bool' | 'string' | 'atom' | 'strbuild' | '[]' type | IDENT
+if_expr       ::= 'if' expr 'do' block ('else' block)? 'end'
+
+type          ::= 'int' | 'float' | 'f32' | 'f64' | 'bool' | 'string' | 'atom' | 'strbuild' | '[]' type | IDENT
 lifetime      ::= 'frame' | 'script' | 'persistent'
 ```
+
+---
+
+## Scripting Style
+
+Chasm supports top-level statements outside any function. Code at file scope runs automatically — no `def main()` required:
+
+```chasm
+print("hello world")
+
+x = 42
+print(x)
+```
+
+This is equivalent to wrapping the statements in `def main()`. If a `def main()` is present, top-level statements are ignored in favour of it. Module attributes (`@name`) and function definitions can be freely mixed with top-level statements.
+
+---
+
+## `if` as an Expression
+
+`if/else/end` can be used as an expression anywhere a value is expected:
+
+```chasm
+label = if @score > 100 do "great" else "ok" end
+print(label)
+```
+
+The `else` branch is required when `if` is used as an expression. The value of each branch must have a compatible type.
+
+---
+
+## Type Aliases
+
+| Alias | Resolves to |
+|---|---|
+| `f32` | `float` |
+| `f64` | `float` |
+| `str` | `string` |
 

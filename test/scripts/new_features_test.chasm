@@ -14,11 +14,18 @@ def test_string_concat() do
 end
 
 def test_array() do
-  a = array_new(3)
-  array_push(a, 10)
-  array_push(a, 20)
-  array_push(a, 30)
-  print(array_len(a))
-  print(array_get(a, 0))
-  print(array_get(a, 2))
+  a :: []int = array_new(3)
+  a.push(10)
+  a.push(20)
+  a.push(30)
+  print(a.len)
+  print(a.get(0))
+  print(a.get(2))
+end
+
+def main() do
+  test_hex()
+  test_for_loop()
+  test_string_concat()
+  test_array()
 end

@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.8.0] — 2026-03-29 — Scripting style, if-expressions, string arrays, error fixes
+
+### Summary
+
+Chasm is now a scripting language. Top-level statements run directly without a `def main()` wrapper, matching the behaviour of Lua and Python. `if/else/end` works as an expression. String arrays (`[]string`) now emit correct C. Undeclared `@attr` references are caught at compile time. New builtins (`assert`, `log`, `todo`, easing functions) are recognised by the type checker. Type aliases `f32`/`f64` are accepted. All test scripts updated to new-style method API.
+
+### Changes
+
+- **feat(lang)**: scripting style — top-level statements outside any function are collected and emitted into `chasm_main` automatically; `def main()` is still supported and takes priority
+- **feat(lang)**: `if/else/end` as an expression — `label = if x > 0 do "pos" else "neg" end` now works anywhere a value is expected; parser handles `if` in `parse_primary`
+- **feat(sema)**: undeclared `@attr` references now emit `error[E001]: undefined attribute` with a help message showing the correct declaration syntax
+- **feat(sema)**: `f32` and `f64` accepted as type aliases for `float`
+- **feat(sema)**: `assert`, `assert_eq`, `log`, `todo`, `file_write`, `str_builder_push`, `str_builder_append` registered as known builtins (no more false E005)
+- **feat(sema)**: easing functions (`ease_in`, `ease_out`, `ease_in_out`, `ease_in_cubic`, `ease_out_cubic`, `ease_in_out_cubic`, `ease_out_bounce`, `ease_in_bounce`, `ease_in_elastic`, `ease_out_elastic`) registered as float-returning builtins
+- **fix(codegen)**: `[]string` and `[]atom` arrays now emit `chasm_array_new_s`, `chasm_array_push_s`, `chasm_array_get_s`, `chasm_array_set_s` — fixes C type errors when pushing `const char*` into `int64_t` arrays
+- **fix(runtime)**: added `chasm_array_new_s`, `chasm_array_push_s`, `chasm_array_get_s`, `chasm_array_set_s`, `chasm_array_pop_s` to both `runtime/chasm_rt.h` and `engine/raylib/chasm_rt.h`
+- **fix(sema)**: `codegen.chasm` internal `[]string` arrays (`fn_names`, `field_names`, `lt_names`, `candidates`) now correctly use `_s` variants — fixes 10 C compile errors in the self-hosted compiler
+- **feat(spec)**: grammar updated — `if_expr` added to `primary_expr`; `f32`/`f64` added to type list; scripting style, if-expressions, type aliases, and easing functions documented
+- **chore**: all test scripts updated to new-style method API (`.push()`, `.get()`, `.len` instead of `array_push()`, `array_get()`, `array_len()`)
+- **chore**: `cmd/cli/cli.go` version bumped to `1.8.0`
+- **bootstrap**: three-stage fixpoint verified (`stage2.c == stage3.c`), binary replaced
+
+---
+
 ## [1.7.0] — 2026-03-29 — Struct literal defaults, cross-platform CLI, getenv builtin
 
 ### Summary

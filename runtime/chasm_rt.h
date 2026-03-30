@@ -341,6 +341,30 @@ static inline void    chasm_array_set (ChasmCtx *ctx, ChasmArray *a, int64_t i, 
 static inline int64_t chasm_array_len (ChasmCtx *ctx, ChasmArray *a)                     { (void)ctx; return a->len; }
 static inline void    chasm_array_clear(ChasmCtx *ctx, ChasmArray *a)                    { (void)ctx; a->len=0; }
 
+/* ---- string (const char*) array ----------------------------------- */
+static inline ChasmArray chasm_array_new_s(ChasmCtx *ctx, int64_t cap) {
+    if (cap <= 0) return (ChasmArray){NULL, 0, 0, (int64_t)sizeof(const char*)};
+    void *d = malloc((size_t)cap * sizeof(const char*));
+    chasm_fh_register(ctx, d);
+    return (ChasmArray){d, 0, cap, (int64_t)sizeof(const char*)};
+}
+static inline void chasm_array_push_s(ChasmCtx *ctx, ChasmArray *a, const char *v) {
+    if (a->len >= a->cap) {
+        a->cap = a->cap * 2 + 8;
+        void *old = a->data;
+        a->data = realloc(a->data, (size_t)a->cap * sizeof(const char*));
+        if (a->data != old) {
+            _ChasmFH *fh = _chasm_fh(ctx);
+            for (int _i = 0; _i < fh->count; _i++)
+                if (fh->ptrs[_i] == old) { fh->ptrs[_i] = a->data; break; }
+        }
+    }
+    if (a->data) ((const char**)a->data)[a->len++] = v;
+}
+static inline const char* chasm_array_get_s(ChasmCtx *ctx, ChasmArray *a, int64_t i) { (void)ctx; return (i>=0&&i<a->len)?((const char**)a->data)[i]:""; }
+static inline void        chasm_array_set_s(ChasmCtx *ctx, ChasmArray *a, int64_t i, const char *v) { (void)ctx; if(i>=0&&i<a->len)((const char**)a->data)[i]=v; }
+static inline const char* chasm_array_pop_s(ChasmCtx *ctx, ChasmArray *a) { (void)ctx; return a->len>0?((const char**)a->data)[--a->len]:""; }
+
 /* ---- typed (struct) array ----------------------------------------- */
 /* Constructor: pass sizeof(YourStruct) as elem_size.
  * Codegen emits per-struct wrappers that call these. */

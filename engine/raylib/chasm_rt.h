@@ -281,6 +281,12 @@ static inline void    chasm_array_set (ChasmCtx *ctx, ChasmArray *a, int64_t i, 
 static inline int64_t chasm_array_len (ChasmCtx *ctx, ChasmArray *a)                     { (void)ctx; return a->len; }
 static inline void    chasm_array_clear(ChasmCtx *ctx, ChasmArray *a)                    { (void)ctx; a->len=0; }
 
+/* ---- string (const char*) array ----------------------------------- */
+static inline void        chasm_array_push_s(ChasmCtx *ctx, ChasmArray *a, const char *v){ (void)ctx; if(a->len<a->cap) ((const char**)a->data)[a->len++]=v; }
+static inline const char* chasm_array_get_s (ChasmCtx *ctx, ChasmArray *a, int64_t i)   { (void)ctx; return(i>=0&&i<a->len)?((const char**)a->data)[i]:""; }
+static inline void        chasm_array_set_s (ChasmCtx *ctx, ChasmArray *a, int64_t i, const char *v){ (void)ctx; if(i>=0&&i<a->len)((const char**)a->data)[i]=v; }
+static inline const char* chasm_array_pop_s (ChasmCtx *ctx, ChasmArray *a)               { (void)ctx; return a->len>0?((const char**)a->data)[--a->len]:""; }
+
 /* ---- typed (struct) array — arena-backed, fixed capacity ---------- */
 static inline ChasmArray chasm_array_new_typed(ChasmCtx *ctx, int64_t cap, int64_t elem_size) {
     if (cap <= 0 || elem_size <= 0) return (ChasmArray){NULL, 0, 0, elem_size};

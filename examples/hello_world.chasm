@@ -1,4 +1,2 @@
-def main() do
-  print("Hello from Chasm!")
-  print(5 + 19)
-end
+print("Hello from Chasm!")
+print(5 + 19)

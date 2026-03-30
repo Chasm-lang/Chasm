@@ -483,6 +483,11 @@ defp parse_primary(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, cp
     np = alloc_node(pool, np, :match_expr, subj, as, arm_list.len, "", line, col)
     return ParseResult{ pos: pos, np: np, cp: cp, node_idx: node_idx }
   end
+  # if/else used as an expression (e.g. x = if cond do a else b end)
+  if k == :if_kw do
+    r = parse_if(tokens, pool, np, ch, cp, pos)
+    return r
+  end
   pos = pos + 1
   node_idx = np
   np = alloc_node(pool, np, :error_node, 0, 0, 0, lx, line, col)
@@ -1419,7 +1424,20 @@ defp parse_file(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, cp ::
       cp        = cp + 1
     end
     if k != :def_kw and k != :defp_kw and k != :defstruct_kw and k != :at_ident and k != :import_kw and k != :extern_kw and k != :enum_kw do
-      pos = pos + 1
+      # Top-level statement (scripting style): parse and store as :toplevel_stmt
+      tl_line = tok_line(tokens, pos)
+      tl_col  = tok_col(tokens, pos)
+      r   = parse_stmt(tokens, pool, np, ch, cp, pos)
+      pos = r.pos
+      np  = r.np
+      cp  = r.cp
+      si  = r.node_idx
+      if si != -1 do
+        tl_idx = np
+        np = alloc_node(pool, np, :toplevel_stmt, si, 0, 0, "", tl_line, tl_col)
+        ch.set(cp, tl_idx)
+        cp = cp + 1
+      end
     end
     pos = skip_newlines(tokens, pos)
   end

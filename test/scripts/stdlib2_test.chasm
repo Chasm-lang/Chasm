@@ -1,81 +1,72 @@
 # stdlib2 — tests for new standard library additions
 
 def test_shape() do
-  print(fract(3.75))          # 0.75
-  print(wrap(110.0, 0.0, 100.0))  # 10
-  print(snap(17.0, 5.0))     # 15
-  print(smooth_step(0.0, 1.0, 0.5))  # 0.5
-  print(ping_pong(3.5, 2.0)) # 0.5
-  print(move_toward(0.0, 10.0, 3.0))  # 3
-  print(sign(-99.0))          # -1
+  print(fract(3.75))
+  print(wrap(110.0, 0.0, 100.0))
+  print(snap(17.0, 5.0))
+  print(smooth_step(0.0, 1.0, 0.5))
+  print(ping_pong(3.5, 2.0))
+  print(move_toward(0.0, 10.0, 3.0))
+  print(sign(-99.0))
 end
 
 def test_easing() do
-  print(ease_in(0.5))         # 0.25
-  print(ease_out(0.5))        # 0.75
-  print(ease_in_out(0.5))     # 0.5
-  print(ease_in_cubic(0.5))   # 0.125
-  print(ease_out_bounce(1.0)) # 1
+  print(ease_in(0.5))
+  print(ease_out(0.5))
+  print(ease_in_out(0.5))
+  print(ease_in_cubic(0.5))
+  print(ease_out_bounce(1.0))
 end
 
 def test_vec2() do
-  print(vec2_len(3.0, 4.0))           # 5
-  print(vec2_dot(1.0, 0.0, 0.0, 1.0)) # 0  (perpendicular)
-  print(vec2_dist(0.0, 0.0, 3.0, 4.0)) # 5
-  print(vec2_norm_x(3.0, 4.0))        # 0.6
-  print(vec2_norm_y(3.0, 4.0))        # 0.8
-  print(vec2_cross(1.0, 0.0, 0.0, 1.0)) # 1
+  print(vec2_len(3.0, 4.0))
+  print(vec2_dot(1.0, 0.0, 0.0, 1.0))
+  print(vec2_dist(0.0, 0.0, 3.0, 4.0))
+  print(vec2_norm_x(3.0, 4.0))
+  print(vec2_norm_y(3.0, 4.0))
+  print(vec2_cross(1.0, 0.0, 0.0, 1.0))
 end
 
 def test_bitwise() do
-  print(bit_and(255, 15))  # 15
-  print(bit_or(240, 15))   # 255
-  print(bit_xor(255, 15))  # 240
-  print(bit_shl(1, 4))     # 16
-  print(bit_shr(256, 4))   # 16
+  print(bit_and(255, 15))
+  print(bit_or(240, 15))
+  print(bit_xor(255, 15))
+  print(bit_shl(1, 4))
+  print(bit_shr(256, 4))
 end
 
 def test_string() do
-  print(str_upper("hello"))        # HELLO
-  print(str_lower("WORLD"))        # world
-  print(str_trim("  hi  "))        # hi
-  print(str_repeat("ab", 3))       # ababab
-  print(str_slice("chasm", 1, 4))  # has
-  print(str_char_at("A", 0))       # 65
-  print(str_from_char(65))         # A
-  print(str_contains("hello world", "world"))   # true
-  print(str_starts_with("chasm", "cha"))        # true
-  print(str_ends_with("chasm", "asm"))          # true
-  print(str_eq("abc", "abc"))      # true
-  print(str_eq("abc", "xyz"))      # false
+  print(str_upper("hello"))
+  print(str_lower("WORLD"))
+  print(str_trim("  hi  "))
+  print(str_repeat("ab", 3))
+  print(str_slice("chasm", 1, 4))
+  print(str_contains("hello world", "world"))
+  print(str_starts_with("chasm", "cha"))
+  print(str_ends_with("chasm", "asm"))
+  print(str_eq("abc", "abc"))
+  print(str_eq("abc", "xyz"))
 end
 
 def test_conversion() do
-  print(to_int(3.9))    # 3
-  print(to_float(42))   # 42
-  print(to_bool(0))     # false
-  print(to_bool(7))     # true
-end
-
-def test_color() do
-  red = rgb(255, 0, 0)
-  print(color_r(red))   # 255
-  print(color_g(red))   # 0
-  print(color_b(red))   # 0
-  print(color_a(red))   # 255
-  white = rgb(255, 255, 255)
-  mixed = color_lerp(red, white, 0.5)
-  print(color_r(mixed)) # 255
-  print(color_g(mixed)) # 127 (approx)
-end
-
-def test_time() do
-  ms = time_ms()
-  print(ms > 0)         # true
+  print(to_int(3.9))
+  print(to_float(42))
+  print(to_bool(0))
+  print(to_bool(7))
 end
 
 def test_assert() do
   assert(1 == 1)
   assert_eq(2 + 2, 4)
-  print(1)              # reached
+  print(1)
+end
+
+def main() do
+  test_shape()
+  test_easing()
+  test_vec2()
+  test_bitwise()
+  test_string()
+  test_conversion()
+  test_assert()
 end

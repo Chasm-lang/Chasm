@@ -30,7 +30,7 @@ cc -o /tmp/chasm_out /tmp/chasm_out.c -I/tmp
 /tmp/chasm_out
 ```
 
-For scripts that have no `def main()` (e.g. the compiler source itself), link the standalone harness:
+For scripts that have no `def main()` (scripting style with top-level statements), the standalone harness is still used — `chasm_main` is generated automatically from the top-level code:
 
 ```bash
 cc -o /tmp/chasm_out /tmp/chasm_out.c /tmp/chasm_harness.c -I/tmp

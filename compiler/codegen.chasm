@@ -88,9 +88,11 @@ end
 
 defp array_elem_suffix(structs :: []StructDef, elem_tid :: int) :: string do
   # Only user-defined struct types get a typed suffix (_TypeName).
-  # Primitive types (int, float, bool, string, atom) use the generic
-  # chasm_array_push/get/set which operate on int64_t — no suffix.
+  # Primitive types (int, float, bool) use the generic chasm_array_push/get/set (int64_t).
+  # String/atom (tid 4 or 5) use the _s suffix (const char* variants).
   if elem_tid == 0 do return "" end
+  if elem_tid == 4 do return "_s" end
+  if elem_tid == 5 do return "_s" end
   sn = struct_name_by_tid(structs, elem_tid)
   if str_len(sn) > 0 do return str_concat("_", sn) end
   return ""
@@ -647,6 +649,22 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
     return "0"
   end
 
+  # if/else used as an expression value — emit C ternary using the last expr
+  # from each branch block.
+  if tag == :if_stmt do
+    cond_c    = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
+    then_node = pool.get(node.b)
+    then_last = ch.get(then_node.a + then_node.b - 1)
+    then_c    = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, then_last)
+    else_c    = "0"
+    if node.c >= 0 do
+      else_node = pool.get(node.c)
+      else_last = ch.get(else_node.a + else_node.b - 1)
+      else_c    = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, else_last)
+    end
+    return str_concat("(", str_concat(unwrap_cond(cond_c), str_concat(" ? ", str_concat(then_c, str_concat(" : ", str_concat(else_c, ")"))))))
+  end
+
   return "0"
 end
 
@@ -708,6 +726,12 @@ defp emit_stmt(pool :: []Node, ch :: []int, types :: []int,
         if str_slice(ann_n, 0, 2) == "[]" do
           et     = elem_type_of_ann(ann_n, structs)
           ve_len = ve_push(var_elems, ve_len, node.name, et)
+          # Patch string/atom array initializer to use _s variant
+          if et == 4 or et == 5 do
+            if val_c == "chasm_array_new(ctx, 0)" do
+              val_c = "chasm_array_new_s(ctx, 0)"
+            end
+          end
         end
       end
     end
@@ -1444,5 +1468,73 @@ defp codegen(pool :: []Node, ch :: []int, root :: int,
       emit_fn(pool, ch, types, structs, fns, fields, decl_idx, root)
     end
     i = i + 1
+  end
+  # Collect top-level statements (scripting style) and emit into chasm_main
+  has_toplevel = false
+  i = 0
+  while i < cl do
+    decl_idx = ch.get(cs + i)
+    decl     = pool.get(decl_idx)
+    if decl.tag == :toplevel_stmt do
+      has_toplevel = true
+      i = cl
+    end
+    i = i + 1
+  end
+  if has_toplevel do
+    # Only emit chasm_main if there is no explicit def main() already
+    has_main = false
+    i = 0
+    while i < fns.len do
+      f = fns.get(i)
+      if f.name == "main" do has_main = true end
+      i = i + 1
+    end
+    if has_main == false do
+      print("void chasm_main(ChasmCtx *ctx) {")
+      var_elems :: []VarElem = make_ve_pool(1024)
+      ve_len = 0
+      # Pre-populate @attr lifetimes and array elem types (same as emit_fn)
+      root_node2 = pool.get(root)
+      rcs2 = root_node2.a
+      rcl2 = root_node2.b
+      ri3 = 0
+      while ri3 < rcl2 do
+        rdecl_idx2 = ch.get(rcs2 + ri3)
+        rdecl2     = pool.get(rdecl_idx2)
+        if rdecl2.tag == :at_decl do
+          rattr_name2 = str_slice(rdecl2.name, 1, str_len(rdecl2.name))
+          ve_len = ve_push(var_elems, ve_len, str_concat("__lt_", rattr_name2), rdecl2.b)
+          rinit_t2 = types.get(rdecl2.a)
+          if rinit_t2 == 7 do
+            rinit_node2 = pool.get(rdecl2.a)
+            if rinit_node2.tag == :call do
+              if rinit_node2.name == "array_fixed" do
+                fixed_elem_tid2 = -2
+                if rinit_node2.b >= 2 do
+                  def_arg_idx2 = ch.get(rinit_node2.a + 1)
+                  def_arg_t2   = types.get(def_arg_idx2)
+                  if def_arg_t2 == 2 do fixed_elem_tid2 = -3 end
+                  if def_arg_t2 > 9 do fixed_elem_tid2 = def_arg_t2 end
+                end
+                ve_len = ve_push(var_elems, ve_len, rattr_name2, fixed_elem_tid2)
+              end
+            end
+          end
+        end
+        ri3 = ri3 + 1
+      end
+      i = 0
+      while i < cl do
+        decl_idx = ch.get(cs + i)
+        decl     = pool.get(decl_idx)
+        if decl.tag == :toplevel_stmt do
+          ve_len = emit_stmt(pool, ch, types, structs, fns, fields, var_elems, ve_len, 1, decl.a)
+        end
+        i = i + 1
+      end
+      print("}")
+      print("")
+    end
   end
 end

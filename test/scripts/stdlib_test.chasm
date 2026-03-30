@@ -1,34 +1,40 @@
 # stdlib test — exercises built-in library functions
 
 def test_math() do
-  print(floor(3.7))       # 3
-  print(ceil(3.2))        # 4
-  print(round(3.5))       # 4
-  print(abs(-9.0))        # 9
-  print(pow(2.0, 8.0))    # 256
-  print(lerp(0.0, 100.0, 0.25))  # 25
-  print(sign(-42.0))      # -1
-  print(clamp(150.0, 0.0, 100.0))  # 100
-  print(min(3.0, 7.0))    # 3
-  print(max(3.0, 7.0))    # 7
-  print(deg_to_rad(180.0))  # ~3.14159
+  print(floor(3.7))
+  print(ceil(3.2))
+  print(round(3.5))
+  print(abs(-9.0))
+  print(pow(2.0, 8.0))
+  print(lerp(0.0, 100.0, 0.25))
+  print(sign(-42.0))
+  print(clamp(150.0, 0.0, 100.0))
+  print(min(3.0, 7.0))
+  print(max(3.0, 7.0))
+  print(deg_to_rad(180.0))
 end
 
 def test_random() do
-  r = rand()
-  # r is between 0.0 and 1.0 — just check it runs
-  n = rand_int(1, 7)      # dice roll: 1-6
-  print(n)
+  n = rand_int(1, 7)
+  print(n > 0)
 end
 
 def test_string() do
   s = str_concat("hello, ", "chasm")
-  print(str_len(s))       # 12
-  print(int_to_str(42))   # "42"
-  print(float_to_str(3.14))  # "3.14"
+  print(str_len(s))
+  print(int_to_str(42))
+  print(float_to_str(3.14))
 end
 
 def test_assert() do
-  assert(1 < 2)    # passes
-  assert(true)     # passes
+  assert(1 < 2)
+  assert(true)
+  print(1)
+end
+
+def main() do
+  test_math()
+  test_random()
+  test_string()
+  test_assert()
 end

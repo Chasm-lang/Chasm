@@ -217,6 +217,8 @@ end
 defp resolve_type(name :: string, structs :: []StructDef) :: int do
   if name == "int"      do return 1 end
   if name == "float"    do return 2 end
+  if name == "f32"      do return 2 end
+  if name == "f64"      do return 2 end
   if name == "bool"     do return 3 end
   if name == "string"   do return 4 end
   if name == "str"      do return 4 end
@@ -332,7 +334,25 @@ defp builtin_ret(name :: string) :: int do
   # void
   if name == "print"           do return 6 end
   if name == "eprint"          do return 6 end
+  if name == "log"             do return 6 end
   if name == "exit"            do return 6 end
+  if name == "assert"          do return 6 end
+  if name == "assert_eq"       do return 6 end
+  if name == "todo"            do return 6 end
+  if name == "file_write"      do return 6 end
+  if name == "str_builder_push"   do return 6 end
+  if name == "str_builder_append" do return 6 end
+  # easing functions
+  if name == "ease_in"          do return 2 end
+  if name == "ease_out"         do return 2 end
+  if name == "ease_in_out"      do return 2 end
+  if name == "ease_in_cubic"    do return 2 end
+  if name == "ease_out_cubic"   do return 2 end
+  if name == "ease_in_out_cubic" do return 2 end
+  if name == "ease_out_bounce"  do return 2 end
+  if name == "ease_in_bounce"   do return 2 end
+  if name == "ease_in_elastic"  do return 2 end
+  if name == "ease_out_elastic" do return 2 end
   return 0
 end
 
@@ -473,6 +493,14 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
 
   if tag == :at_ref do
     tid = sym_lookup(syms, sym_len, node.name)
+    if sym_contains(syms, sym_len, node.name) == false do
+      snip  = extract_snippet(src, node.line)
+      caret = make_caret(node.col, str_len(node.name))
+      msg   = str_concat("undefined attribute `", str_concat(node.name, "`"))
+      help  = str_concat("declare it at the top of the file: `", str_concat(node.name, " :: script = 0`"))
+      d :: Diagnostic = Diagnostic{ code: "E001", category: "undefined attribute", file: file, line: node.line, col: node.col, message: msg, snippet: snip, caret: caret, help: help }
+      dc = diag_emit(dc, d)
+    end
     types.set(idx, tid)
     return tid
   end
@@ -808,6 +836,21 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
     return base_tid
   end
 
+  # if/else used as an expression — type is the last expression in the then-branch.
+  if tag == :if_stmt do
+    _tc    = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, node.a)
+    t_node = pool.get(node.b)
+    t_last = ch.get(t_node.a + t_node.b - 1)
+    t_tid  = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, t_last)
+    if node.c >= 0 do
+      e_node = pool.get(node.c)
+      e_last = ch.get(e_node.a + e_node.b - 1)
+      _te    = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, e_last)
+    end
+    types.set(idx, t_tid)
+    return t_tid
+  end
+
   return 0
 end
 
@@ -1130,6 +1173,31 @@ defp sema_all(pool :: []Node, ch :: []int, root :: int,
       sema_fn(pool, ch, types, syms, fns, structs, fields, dc, src, file, decl_idx, attr_sym_len, attrs)
     end
     i = i + 1
+  end
+  # Pass 2: type-check top-level statements (scripting style).
+  # They share the same scope as @attrs (attr_sym_len symbols pre-populated).
+  has_toplevel_stmts = false
+  i = 0
+  while i < cl do
+    decl_idx = ch.get(cs + i)
+    decl     = pool.get(decl_idx)
+    if decl.tag == :toplevel_stmt do
+      has_toplevel_stmts = true
+      i = cl
+    end
+    i = i + 1
+  end
+  if has_toplevel_stmts do
+    tl_sym_len = attr_sym_len
+    i = 0
+    while i < cl do
+      decl_idx = ch.get(cs + i)
+      decl     = pool.get(decl_idx)
+      if decl.tag == :toplevel_stmt do
+        tl_sym_len = sema_stmt(pool, ch, types, syms, tl_sym_len, fns, structs, fields, dc, src, file, 0, "main", attrs, decl.a)
+      end
+      i = i + 1
+    end
   end
   return dc
 end

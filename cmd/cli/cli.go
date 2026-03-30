@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-const version = "1.1.0"
+const version = "1.8.0"
 
 // tmpPath returns a path inside the temp directory used by the bootstrap binary.
 // On Unix the bootstrap binary hardcodes /tmp, so we match that.

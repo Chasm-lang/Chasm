@@ -1,0 +1,4 @@
+@score :: script = 200
+
+label = if @score > 100 do "great" else "ok" end
+print(label)

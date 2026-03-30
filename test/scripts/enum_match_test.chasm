@@ -1,13 +1,13 @@
 enum Direction { North, South, East, West }
 
-def describe_dir(d :: int) :: int do
-  result :: int = match d {
-    North => 1
-    South => 2
-    East  => 3
-    West  => 4
-    _     => 0
-  }
+defp describe_dir(d :: int) :: int do
+  result :: int = case d do
+    when 0 -> 1
+    when 1 -> 2
+    when 2 -> 3
+    when 3 -> 4
+    _ -> 0
+  end
   return result
 end
 
