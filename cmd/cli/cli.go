@@ -22,9 +22,15 @@ import (
 
 const version = "1.1.0"
 
-// tmpPath returns a path inside the OS temp directory.
+// tmpPath returns a path inside the temp directory used by the bootstrap binary.
+// On Unix the bootstrap binary hardcodes /tmp, so we match that.
+// On Windows there is no /tmp; use the OS temp dir instead (requires a
+// Windows-native bootstrap binary compiled with the matching path).
 func tmpPath(name string) string {
-	return filepath.Join(os.TempDir(), name)
+	if runtime.GOOS == "windows" {
+		return filepath.Join(os.TempDir(), name)
+	}
+	return filepath.Join("/tmp", name)
 }
 
 // defaultChasmHome is baked in at build time by install.sh:
@@ -345,7 +351,7 @@ func buildAndRun(path string, opts options, quiet bool, procOut **exec.Cmd) {
 
 	binPath := tmpPath("chasm_run_out")
 	harnessC := writeStandaloneHarness()
-	ccArgs := []string{"cc", "-o", binPath, outC, harnessC, "-I" + os.TempDir()}
+	ccArgs := []string{"cc", "-o", binPath, outC, harnessC, "-I" + tmpPath("")}
 
 	cc := exec.Command(ccArgs[0], ccArgs[1:]...)
 	cc.Stdout = os.Stdout

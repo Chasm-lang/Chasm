@@ -194,9 +194,10 @@ end
 # ---- Field type registry -----------------------------------------------------
 
 defstruct FieldDef do
-  struct_tid :: int
-  name       :: string
-  type_id    :: int
+  struct_tid       :: int
+  name             :: string
+  type_id          :: int
+  default_node_idx :: int
 end
 
 defp field_lookup(fields :: []FieldDef, struct_tid :: int, name :: string) :: int do
@@ -248,7 +249,9 @@ defp builtin_ret(name :: string) :: int do
   if name == "bool_to_str"       do return 4 end
   if name == "atom_to_str"       do return 4 end
   if name == "file_read"         do return 4 end
+  if name == "getenv"            do return 4 end
   if name == "str_builder_build" do return 4 end
+  if name == "str_format"        do return 4 end
   # strbuild-returning
   if name == "str_builder_new"   do return 8 end
   # int-returning
@@ -405,7 +408,7 @@ defp collect_field_list(pool :: []Node, ch :: []int, structs :: []StructDef) :: 
       field_node = pool.get(field_idx)
       type_ref   = pool.get(field_node.a)
       field_tid  = resolve_type(type_ref.name, structs)
-      fd :: FieldDef = FieldDef{ struct_tid: sd.type_id, name: field_node.name, type_id: field_tid }
+      fd :: FieldDef = FieldDef{ struct_tid: sd.type_id, name: field_node.name, type_id: field_tid, default_node_idx: field_node.b }
       result.push(fd)
       fi = fi + 1
     end
@@ -849,6 +852,26 @@ defp sema_stmt(pool :: []Node, ch :: []int, types :: []int,
         end
       end
     end
+    # Fallback: detect array_new(Type, cap) without type annotation
+    if elem_t == 0 do
+      rhs_vd = pool.get(node.b)
+      if rhs_vd.tag == :call do
+        if rhs_vd.name == "array_new" do
+          if rhs_vd.b == 2 do
+            ta_idx_vd = ch.get(rhs_vd.a)
+            ta_nd_vd  = pool.get(ta_idx_vd)
+            if ta_nd_vd.tag == :ident do
+              si_vd = 0
+              while si_vd < structs.len do
+                sd_vd = structs.get(si_vd)
+                if sd_vd.name == ta_nd_vd.name do elem_t = sd_vd.type_id end
+                si_vd = si_vd + 1
+              end
+            end
+          end
+        end
+      end
+    end
     types.set(idx, val_t)
     sym_len = sym_push(syms, sym_len, node.name, val_t, elem_t)
     return sym_len
@@ -861,7 +884,25 @@ defp sema_stmt(pool :: []Node, ch :: []int, types :: []int,
     if lhs_node.tag == :ident do
       already = sym_contains(syms, sym_len, lhs_node.name)
       if already == false do
-        sym_len = sym_push(syms, sym_len, lhs_node.name, val_t, 0)
+        elem_t_as = 0
+        rhs_as = pool.get(node.b)
+        if rhs_as.tag == :call do
+          if rhs_as.name == "array_new" do
+            if rhs_as.b == 2 do
+              ta_idx_as = ch.get(rhs_as.a)
+              ta_nd_as  = pool.get(ta_idx_as)
+              if ta_nd_as.tag == :ident do
+                si_as = 0
+                while si_as < structs.len do
+                  sd_as = structs.get(si_as)
+                  if sd_as.name == ta_nd_as.name do elem_t_as = sd_as.type_id end
+                  si_as = si_as + 1
+                end
+              end
+            end
+          end
+        end
+        sym_len = sym_push(syms, sym_len, lhs_node.name, val_t, elem_t_as)
       end
     end
     types.set(idx, val_t)
@@ -1056,6 +1097,20 @@ defp sema_all(pool :: []Node, ch :: []int, root :: int,
             if init_nd.b >= 2 do
               def_child_idx = ch.get(init_nd.a + 1)
               elem_t = types.get(def_child_idx)
+            end
+          end
+          if init_nd.name == "array_new" do
+            if init_nd.b == 2 do
+              ta_idx_at = ch.get(init_nd.a)
+              ta_nd_at  = pool.get(ta_idx_at)
+              if ta_nd_at.tag == :ident do
+                si_at = 0
+                while si_at < structs.len do
+                  sd_at = structs.get(si_at)
+                  if sd_at.name == ta_nd_at.name do elem_t = sd_at.type_id end
+                  si_at = si_at + 1
+                end
+              end
             end
           end
         end

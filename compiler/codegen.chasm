@@ -412,19 +412,56 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
   end
 
   if tag == :struct_lit do
-    cs       = node.a
-    cl       = node.b
-    flds_c   = ""
-    fi       = 0
-    while fi < cl do
-      field_node_idx = ch.get(cs + fi)
-      fnode = pool.get(field_node_idx)
-      val_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, fnode.a)
-      if fi > 0 do flds_c = str_concat(flds_c, ", ") end
-      flds_c = str_concat(flds_c, str_concat(".", str_concat(fnode.name, str_concat(" = ", val_c))))
-      fi = fi + 1
+    cs          = node.a
+    cl          = node.b
+    struct_name = node.name
+    # Resolve struct type id for default lookup
+    struct_tid_sl = 0
+    si_sl = 0
+    while si_sl < structs.len do
+      sd_sl = structs.get(si_sl)
+      if sd_sl.name == struct_name do struct_tid_sl = sd_sl.type_id end
+      si_sl = si_sl + 1
     end
-    return str_concat("(", str_concat(node.name, str_concat("){ ", str_concat(flds_c, " }"))))
+    flds_c      = ""
+    field_count = 0
+    fdi_sl      = 0
+    while fdi_sl < fields.len do
+      fd_sl = fields.get(fdi_sl)
+      if fd_sl.struct_tid == struct_tid_sl do
+        # Check if this field is provided in the literal
+        is_provided = 0
+        provided_c  = ""
+        pi = 0
+        while pi < cl do
+          field_node_idx = ch.get(cs + pi)
+          fnode          = pool.get(field_node_idx)
+          if fnode.name == fd_sl.name do
+            is_provided = 1
+            provided_c  = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, fnode.a)
+          end
+          pi = pi + 1
+        end
+        val_c = ""
+        emit_field = 0
+        if is_provided == 1 do
+          val_c      = provided_c
+          emit_field = 1
+        else
+          if fd_sl.default_node_idx >= 0 do
+            val_c      = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, fd_sl.default_node_idx)
+            emit_field = 1
+          end
+        end
+        if emit_field == 1 do
+          if field_count > 0 do flds_c = str_concat(flds_c, ", ") end
+          flds_c      = str_concat(flds_c, str_concat(".", str_concat(fd_sl.name, str_concat(" = ", val_c))))
+          field_count = field_count + 1
+        end
+      end
+      fdi_sl = fdi_sl + 1
+    end
+    return str_concat("(", str_concat(struct_name, str_concat("){ ", str_concat(flds_c, " }"))))
   end
 
   if tag == :struct_update do

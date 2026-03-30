@@ -319,7 +319,7 @@ defp parse_primary(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, cp
       np = alloc_node(pool, np, :call, cs, arg_list.len, 0, name, line, col)
       return ParseResult{ pos: pos, np: np, cp: cp, node_idx: node_idx }
     end
-    if tok_kind(tokens, pos) == :lbrace and tok_kind(tokens, pos + 1) == :ident do
+    if tok_kind(tokens, pos) == :lbrace and (tok_kind(tokens, pos + 1) == :ident or tok_kind(tokens, pos + 1) == :rbrace) do
       pos = pos + 1
       fi_list :: []int = []
       while tok_kind(tokens, pos) != :rbrace and tok_kind(tokens, pos) != :eof do
@@ -1137,17 +1137,18 @@ defp parse_defstruct(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, 
     np = alloc_node(pool, np, :field, 0, 0, 0, fname, fline, fcol)
     type_idx  = np
     np = alloc_node(pool, np, :type_ref, 0, 0, 0, tname, fline, fcol)
-    pool.set(field_idx, Node{ tag: :field, a: type_idx, b: 0, c: 0, name: fname, line: fline, col: fcol })
     ch.set(cp, field_idx)
     cp = cp + 1
-    # Skip optional default value: = expr
+    def_node_idx = -1
+    # Skip optional default value: = expr; store node index in field.b
     if tok_kind(tokens, pos) == :eq do
       pos = pos + 1
       r_def = parse_expr(tokens, pool, np, ch, cp, pos)
       pos   = r_def.pos
       np    = r_def.np
-      # Do not record the default expr as a child — just advance past it
+      def_node_idx = r_def.node_idx
     end
+    pool.set(field_idx, Node{ tag: :field, a: type_idx, b: def_node_idx, c: 0, name: fname, line: fline, col: fcol })
     pos = skip_newlines(tokens, pos)
   end
   if tok_kind(tokens, pos) == :end_kw do
