@@ -61,6 +61,7 @@ extern fn key_pressed(key: int) -> bool                                  = "rl_i
 extern fn key_released(key: int) -> bool                                 = "rl_is_key_released"
 extern fn key_up(key: int) -> bool                                       = "rl_is_key_up"
 extern fn key_last() -> int                                              = "rl_get_key_pressed"
+extern fn key_code(name: str) -> int                                     = "rl_key_from_name"
 
 # ---- Mouse -----------------------------------------------------------------
 # Buttons: LEFT=0, RIGHT=1, MIDDLE=2

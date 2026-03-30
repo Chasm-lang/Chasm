@@ -174,6 +174,20 @@ void chasm_mouse_cursor(ChasmCtx *ctx, int64_t cursor)      { (void)ctx; rl_mous
 const char *chasm_get_clipboard(ChasmCtx *ctx)              { (void)ctx; return rl_get_clipboard(); }
 void        chasm_set_clipboard(ChasmCtx *ctx, const char *text) { (void)ctx; rl_set_clipboard(text); }
 
+/* ---- Keyboard: key_code ---------------------------------------------------- */
+int64_t chasm_key_code(ChasmCtx *ctx, const char *name) { (void)ctx; return rl_key_from_name(name); }
+
+/* ---- Aliases (doc-friendly names) ----------------------------------------- */
+void    chasm_clear_background(ChasmCtx *ctx, int64_t c)  { (void)ctx; rl_clear_background(c); }
+void    chasm_draw_rectangle(ChasmCtx *ctx, double x, double y, double w, double h, int64_t c)
+    { (void)ctx; rl_draw_rectangle(x, y, w, h, c); }
+void    chasm_draw_rectangle_lines(ChasmCtx *ctx, double x, double y, double w, double h, int64_t c)
+    { (void)ctx; rl_draw_rectangle_lines(x, y, w, h, c); }
+void    chasm_draw_circle_v(ChasmCtx *ctx, double cx, double cy, double r, int64_t c)
+    { (void)ctx; rl_draw_circle(cx, cy, r, c); }
+int64_t chasm_screen_width(ChasmCtx *ctx)                 { (void)ctx; return rl_screen_width(); }
+int64_t chasm_screen_height(ChasmCtx *ctx)                { (void)ctx; return rl_screen_height(); }
+
 /* NOTE: chasm_abs, chasm_sqrt, chasm_sin, chasm_cos, etc. are static inline in
  * chasm_rt.h — each TU (including the script dylib) gets its own copy.
  * Do NOT export them here; that would create duplicate symbol conflicts. */

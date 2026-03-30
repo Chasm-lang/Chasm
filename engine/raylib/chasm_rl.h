@@ -174,6 +174,44 @@ static inline bool    rl_is_key_released(int64_t k)   { return IsKeyReleased((in
 static inline bool    rl_is_key_up(int64_t k)          { return IsKeyUp((int)k); }
 static inline int64_t rl_get_key_pressed(void)         { return (int64_t)GetKeyPressed(); }
 
+static inline int64_t rl_key_from_name(const char *name) {
+    if (!name) return 0;
+    /* Arrow keys */
+    if (strcmp(name, "right") == 0)       return KEY_RIGHT;
+    if (strcmp(name, "left") == 0)        return KEY_LEFT;
+    if (strcmp(name, "up") == 0)          return KEY_UP;
+    if (strcmp(name, "down") == 0)        return KEY_DOWN;
+    /* Common keys */
+    if (strcmp(name, "space") == 0)       return KEY_SPACE;
+    if (strcmp(name, "enter") == 0)       return KEY_ENTER;
+    if (strcmp(name, "escape") == 0)      return KEY_ESCAPE;
+    if (strcmp(name, "backspace") == 0)   return KEY_BACKSPACE;
+    if (strcmp(name, "tab") == 0)         return KEY_TAB;
+    /* Modifiers */
+    if (strcmp(name, "shift") == 0)       return KEY_LEFT_SHIFT;
+    if (strcmp(name, "left_shift") == 0)  return KEY_LEFT_SHIFT;
+    if (strcmp(name, "right_shift") == 0) return KEY_RIGHT_SHIFT;
+    if (strcmp(name, "ctrl") == 0)        return KEY_LEFT_CONTROL;
+    if (strcmp(name, "left_ctrl") == 0)   return KEY_LEFT_CONTROL;
+    if (strcmp(name, "right_ctrl") == 0)  return KEY_RIGHT_CONTROL;
+    if (strcmp(name, "alt") == 0)         return KEY_LEFT_ALT;
+    if (strcmp(name, "left_alt") == 0)    return KEY_LEFT_ALT;
+    if (strcmp(name, "right_alt") == 0)   return KEY_RIGHT_ALT;
+    /* Single letters a-z */
+    if (name[0] >= 'a' && name[0] <= 'z' && name[1] == '\0') return (int64_t)(name[0] - 'a' + KEY_A);
+    if (name[0] >= 'A' && name[0] <= 'Z' && name[1] == '\0') return (int64_t)(name[0] - 'A' + KEY_A);
+    /* Digits 0-9 */
+    if (name[0] >= '0' && name[0] <= '9' && name[1] == '\0') return (int64_t)(name[0] - '0' + KEY_ZERO);
+    /* Function keys f1-f12 */
+    if (name[0] == 'f' || name[0] == 'F') {
+        int n = 0;
+        const char *p = name + 1;
+        while (*p >= '0' && *p <= '9') n = n * 10 + (*p++ - '0');
+        if (*p == '\0' && n >= 1 && n <= 12) return (int64_t)(KEY_F1 + n - 1);
+    }
+    return 0;
+}
+
 /* ---- Mouse -----------------------------------------------------------------
    Mouse buttons: MOUSE_BUTTON_LEFT=0, MOUSE_BUTTON_RIGHT=1, MIDDLE=2        */
 static inline double rl_mouse_x(void)               { return (double)GetMouseX(); }

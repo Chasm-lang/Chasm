@@ -78,6 +78,7 @@ static inline bool    chasm_key_pressed(ChasmCtx *ctx, int64_t k)      { (void)c
 static inline bool    chasm_key_released(ChasmCtx *ctx, int64_t k)     { (void)ctx; return rl_is_key_released(k); }
 static inline bool    chasm_key_up(ChasmCtx *ctx, int64_t k)           { (void)ctx; return rl_is_key_up(k); }
 static inline int64_t chasm_key_last(ChasmCtx *ctx)                    { (void)ctx; return rl_get_key_pressed(); }
+static inline int64_t chasm_key_code(ChasmCtx *ctx, const char *name)  { (void)ctx; return rl_key_from_name(name); }
 
 /* ---- Mouse ----------------------------------------------------------------- */
 static inline double chasm_mouse_x(ChasmCtx *ctx)                      { (void)ctx; return rl_mouse_x(); }

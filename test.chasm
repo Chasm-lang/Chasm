@@ -1,9 +1,0 @@
-for i in 0..10 do
-  if i == 3 do
-    continue
-  end
-  if i == 6 do
-    break
-  end
-  print(i)
-end
