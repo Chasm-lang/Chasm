@@ -22,7 +22,7 @@ import (
 	"unicode"
 )
 
-const version = "1.9.2"
+const version = "1.9.3"
 
 // tmpPath returns a path inside the temp directory used by the bootstrap binary.
 // On Unix the bootstrap binary hardcodes /tmp, so we match that.
@@ -1197,8 +1197,7 @@ func fmtReindent(lines []string) []string {
 		out = append(out, strings.Repeat("  ", depth)+trimmed)
 		if strings.HasSuffix(trimmed, " do") || trimmed == "do" {
 			depth++
-		}
-		if fw == "else" {
+		} else if fw == "else" {
 			depth++
 		}
 	}

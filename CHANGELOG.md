@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.9.3] — 2026-03-30 — else do formatter and LSP fix
+
+### Summary
+
+`else do` blocks now indent correctly and the LSP no longer reports a false "missing end" error for valid `if/else do/end` code.
+
+### Changes
+
+- **fix(fmt)**: `else do` was double-incrementing indent depth (once for `else`, once for trailing `do`) — now correctly increments once
+- **fix(lsp)**: `do` immediately following `else` no longer counted as an unmatched block opener in the do/end balance check
+- **chore**: CLI version bumped to `1.9.3`
+
+---
+
 ## [1.9.2] — 2026-03-30 — Ruby-style formatter
 
 ### Summary

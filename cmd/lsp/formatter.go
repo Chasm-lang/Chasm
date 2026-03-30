@@ -366,11 +366,11 @@ func reindent(lines []string) []string {
 
 		out = append(out, strings.Repeat("  ", depth)+trimmed)
 
-		// Indent after any line ending with " do"
+		// Indent after any line ending with " do".
+		// `else do` ends with " do" AND fw == "else" — only increment once.
 		if strings.HasSuffix(trimmed, " do") || trimmed == "do" {
 			depth++
-		}
-		if fw == "else" {
+		} else if fw == "else" {
 			depth++
 		}
 	}

@@ -929,6 +929,7 @@ func checkUndefined(pr *parseResult, src string, lines []string) {
 	// Check for unclosed do/end blocks (simple heuristic)
 	doCount := 0
 	endCount := 0
+	var prevIdent string
 	ts := newTokenStream(src)
 	for {
 		t := ts.consume()
@@ -938,10 +939,14 @@ func checkUndefined(pr *parseResult, src string, lines []string) {
 		if t.kind == tokIdent {
 			switch t.text {
 			case "do":
-				doCount++
+				// `else do` shares the enclosing `if`'s `end` — don't count it.
+				if prevIdent != "else" {
+					doCount++
+				}
 			case "end":
 				endCount++
 			}
+			prevIdent = t.text
 		}
 	}
 	if doCount > endCount {
