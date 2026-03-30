@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.7.0] — 2026-03-29 — Struct literal defaults, cross-platform CLI, getenv builtin
+
+### Summary
+
+Struct literals now fill in omitted fields from their declared defaults. The CLI temp-path logic is fixed for macOS (`os.TempDir()` was returning `/var/folders/...` but the bootstrap binary hardcodes `/tmp`). Adds `getenv` and `str_format` builtins, and improves `array_new` element-type inference.
+
+### Changes
+
+- **fix(compiler)**: struct literals with omitted fields now emit declared default values instead of leaving members uninitialized — `Foo{ x: 1 }` correctly fills `y`, `z`, etc. from `defstruct` defaults
+- **fix(parser)**: allow empty struct literals (`Foo{}`) — the parser previously required at least one field
+- **fix(parser)**: struct field default value node is now stored in `field.b` so codegen can retrieve and emit it
+- **fix(cli)**: `tmpPath` uses `/tmp` on Unix/macOS (matching the bootstrap binary's hardcoded path) and `os.TempDir()` on Windows — fixes "FileNotFound" on macOS where `os.TempDir()` returns `/var/folders/...`
+- **feat(sema)**: register `getenv` as a string-returning builtin
+- **feat(sema)**: register `str_format` as a string-returning builtin
+- **feat(runtime)**: add `chasm_getenv` to `chasm_rt.h` for use by user scripts and future Windows bootstrap
+- **feat(sema)**: `array_new(Type, cap)` element type is now inferred in `var`, plain assignment, and `@attr` initializer contexts (no explicit type annotation needed)
+
+---
+
 ## [1.6.0] — 2026-03-29 — Godot plugin, typed heap arrays, runtime hardening
 
 ### Summary
