@@ -1,0 +1,18 @@
+defp distance(ax :: float, ay :: float, bx :: float, by :: float) :: float do
+  dx = bx - ax
+  dy = by - ay
+  sqrt(dx * dx + dy * dy)
+end
+
+defp lerp_angle(a :: float, b :: float, t :: float) :: float do
+  a + angle_diff(a, b) * t
+end
+
+defp sign_of(x :: float) :: float do
+  if x > 0.0 do 1.0 else if x < 0.0 do -1.0 else 0.0 end end
+end
+
+print(distance(0.0, 0.0, 3.0, 4.0))   # 5
+print(sign_of(5.0))                    # 1
+print(sign_of(-3.0))                   # -1
+print(sign_of(0.0))                    # 0

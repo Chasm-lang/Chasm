@@ -1,0 +1,54 @@
+# math builtins
+print(clamp(150.0, 0.0, 100.0))   # 100
+print(lerp(0.0, 100.0, 0.5))      # 50
+print(sin(0.0))                    # 0
+print(cos(0.0))                    # 1
+print(sqrt(25.0))                  # 5
+print(abs(-9.0))                   # 9
+print(floor(3.7))                  # 3
+print(ceil(3.2))                   # 4
+print(round(3.5))                  # 4
+print(min(3.0, 7.0))               # 3
+print(max(3.0, 7.0))               # 7
+print(pow(2.0, 8.0))               # 256
+print(sign(-42.0))                 # -1
+print(deg_to_rad(180.0))           # ~3.14159
+
+# vec2
+dx = 3.0
+dy = 4.0
+print(vec2_len(dx, dy))            # 5
+print(vec2_dist(0.0, 0.0, 3.0, 4.0))  # 5
+print(vec2_norm_x(3.0, 4.0))      # 0.6
+print(vec2_norm_y(3.0, 4.0))      # 0.8
+
+# color
+red  = rgb(255, 0, 0)
+print(color_r(red))   # 255
+print(color_g(red))   # 0
+print(color_b(red))   # 0
+
+# bitwise
+flags = 13
+print(bit_and(flags, 4))    # 4
+print(bit_or(240, 15))      # 255
+print(bit_xor(255, 15))     # 240
+print(bit_shl(1, 4))        # 16
+print(bit_shr(256, 4))      # 16
+
+# assert passes silently
+defp get_tier(score :: int) :: string do
+  if score < 100 do return "bronze" end
+  if score < 500 do return "silver" end
+  return "gold"
+end
+assert(get_tier(50) == "bronze")
+assert(get_tier(200) == "silver")
+assert(get_tier(600) == "gold")
+print("asserts passed")
+
+# type conversions
+print(to_int(3.9))     # 3
+print(to_float(42))    # 42
+print(to_bool(0))      # false
+print(to_bool(1))      # true

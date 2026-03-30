@@ -1,0 +1,64 @@
+defstruct Vec2 do
+  x :: float
+  y :: float
+end
+
+defstruct Transform do
+  pos :: Vec2
+  rot :: float
+end
+
+defstruct Bullet do
+  x      :: float = 0.0
+  y      :: float = 0.0
+  speed  :: float = 5.0
+  active :: int   = 0
+end
+
+defp length(v :: Vec2) :: float do
+  sqrt(v.x * v.x + v.y * v.y)
+end
+
+defp normalized(v :: Vec2) :: Vec2 do
+  len = length(v)
+  Vec2{ x: v.x / len, y: v.y / len }
+end
+
+# value copy semantics
+a = Vec2{ x: 1.0, y: 2.0 }
+b = a
+b = b with { x: 99.0 }
+print(a.x)   # 1
+print(b.x)   # 99
+
+# struct defaults
+b1 = Bullet{}
+b2 = Bullet{ x: 10.0 }
+b3 = Bullet{ x: 5.0, speed: 8.0 }
+print(b1.speed)   # 5
+print(b2.x)       # 10
+print(b3.speed)   # 8
+
+# with syntax
+pos  = Vec2{ x: 1.0, y: 2.0 }
+pos2 = pos with { x: 10.0 }
+print(pos2.x)   # 10
+print(pos2.y)   # 2
+
+# field access
+pos3 = Vec2{ x: 3.0, y: 4.0 }
+len = sqrt(pos3.x * pos3.x + pos3.y * pos3.y)
+print(len)   # 5
+
+# functions on structs
+n = normalized(Vec2{ x: 3.0, y: 4.0 })
+print(n.x)   # 0.6
+print(n.y)   # 0.8
+
+# nested structs
+t = Transform{ pos: Vec2{ x: 5.0, y: 3.0 }, rot: 0.0 }
+print(t.pos.x)   # 5
+
+t2 = t with { pos: t.pos with { x: 10.0 } }
+print(t2.pos.x)   # 10
+print(t2.rot)     # 0

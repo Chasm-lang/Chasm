@@ -1,0 +1,58 @@
+@state :: script = :idle
+
+label = case @state do
+  when :idle    -> "idle"
+  when :running -> "run"
+  _             -> "?"
+end
+print(label)   # idle
+
+defp color_for(s :: atom) :: int do
+  case s do
+    when :healthy  -> 0x00ff00ff
+    when :hurt     -> 0xff8800ff
+    when :critical -> 0xff0000ff
+    _              -> 0xffffffff
+  end
+end
+
+print(color_for(:healthy))
+print(color_for(:hurt))
+
+defp tier(score :: int) :: string do
+  case score / 100 do
+    when 0 -> "bronze"
+    when 1 -> "silver"
+    when 2 -> "gold"
+    _      -> "legend"
+  end
+end
+
+print(tier(50))
+print(tier(150))
+print(tier(350))
+
+# if as expression chained
+@phase :: script = :attack
+@target_count :: script = 2
+
+result = case @phase do
+  when :attack ->
+    case @target_count do
+      when 0 -> "no target"
+      _      -> "attacking"
+    end
+  when :retreat -> "retreating"
+  _             -> "idle"
+end
+print(result)   # attacking
+
+# prefer case over chained if
+@s :: script = :running
+label2 = case @s do
+  when :idle    -> "I"
+  when :running -> "R"
+  when :jumping -> "J"
+  _             -> "?"
+end
+print(label2)   # R
