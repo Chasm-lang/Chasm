@@ -1,0 +1,44 @@
+defstruct Vec2 do
+  x :: float
+  y :: float
+end
+
+defp length(v :: Vec2) :: float do
+  sqrt(v.x * v.x + v.y * v.y)
+end
+
+defp fib(n :: int) :: int do
+  if n <= 1 do
+    return n
+  end
+  return fib(n - 1) + fib(n - 2)
+end
+
+print("Hello, Chasm!")
+
+name = "world"
+x    = 42
+msg  = "hello #{name}, x is #{x}"
+print(msg)
+
+print(fib(10))
+
+pos = Vec2{ x: 3.0, y: 4.0 }
+print(length(pos))
+
+pos2 = pos with { x: 0.0 }
+print(pos2.y)
+
+scores = array_new(4)
+scores.push(100)
+scores.push(85)
+scores.push(92)
+print(scores.len)
+print(scores.cap)
+print(scores.get(0))
+
+total = 0
+for i in 0..scores.len do
+  total = total + scores.get(i)
+end
+print(total)

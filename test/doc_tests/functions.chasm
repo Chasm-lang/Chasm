@@ -1,0 +1,33 @@
+defp add(a :: int, b :: int) :: int do
+  return a + b
+end
+
+defp area(w :: float, h :: float) :: float do
+  w * h
+end
+
+defp clamp_score(s :: int) :: int do
+  if s < 0 do return 0 end
+  if s > 999 do return 999 end
+  return s
+end
+
+defp fib(n :: int) :: int do
+  if n <= 1 do
+    return n
+  end
+  return fib(n - 1) + fib(n - 2)
+end
+
+defp double(x :: float) :: float do x * 2.0 end
+defp cap(x :: float) :: float do clamp(x, 0.0, 100.0) end
+
+print(add(3, 4))
+print(area(3.0, 4.0))
+print(clamp_score(-5))
+print(clamp_score(1000))
+print(clamp_score(42))
+print(fib(10))
+
+result = 30.0 |> double() |> cap()
+print(result)

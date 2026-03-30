@@ -1,0 +1,52 @@
+x = 5
+if x > 0 do
+  print("positive")
+end
+
+if x > 0 do
+  print("positive")
+else
+  print("non-positive")
+end
+
+if x > 0 do
+  print("positive")
+else
+  if x < 0 do
+    print("negative")
+  else
+    print("zero")
+  end
+end
+
+@score :: script = 150
+label = if @score > 100 do "great" else "ok" end
+print(label)
+
+i = 0
+while i < 3 do
+  print(i)
+  i = i + 1
+end
+
+for i in 0..5 do
+  print(i)
+end
+
+names :: []string = array_new(3)
+names.push("Alice")
+names.push("Bob")
+names.push("Carol")
+for name in names do
+  print(name)
+end
+
+for i in 0..10 do
+  if i == 3 do
+    continue
+  end
+  if i == 6 do
+    break
+  end
+  print(i)
+end

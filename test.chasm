@@ -1,4 +1,9 @@
-@score :: script = 200
-
-label = if @score > 100 do "great" else "ok" end
-print(label)
+for i in 0..10 do
+  if i == 3 do
+    continue
+  end
+  if i == 6 do
+    break
+  end
+  print(i)
+end

@@ -1,0 +1,28 @@
+arr = array_new(8)
+print(arr.len)
+print(arr.cap)
+arr.push(10)
+arr.push(20)
+print(arr.len)
+print(arr.cap)
+
+defstruct Bullet do
+  x     :: float
+  y     :: float
+  speed :: float
+end
+
+bullets = array_new(Bullet, 64)
+bullets.push(Bullet{ x: 0.0, y: 0.0, speed: 5.0 })
+b :: Bullet = bullets.get(0)
+bullets.set(0, b with { x: b.x + b.speed })
+print(bullets.len)
+print(bullets.cap)
+
+for i in 0..arr.len do
+  print(arr.get(i))
+end
+
+for item in arr do
+  print(item)
+end

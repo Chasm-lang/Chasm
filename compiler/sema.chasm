@@ -592,7 +592,8 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
       while fi2 < fns.len do
         fsig = fns.get(fi2)
         if fsig.name == node.name do
-          if fsig.params_count != cl do
+          # Allow params_count - 1 == cl: the pipe operator adds one implicit arg
+          if fsig.params_count != cl and fsig.params_count != cl + 1 do
             snip  = extract_snippet(src, node.line)
             caret = make_caret(node.col, str_len(node.name))
             msg   = str_concat("`", str_concat(node.name, str_concat("` expects ", str_concat(int_to_str(fsig.params_count), str_concat(" argument(s), got ", int_to_str(cl))))))
@@ -645,6 +646,20 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
       ai = ai + 1
     end
     mn = node.name
+    # String method return types
+    if recv_t == 4 or recv_t == 5 do
+      if mn == "len"         do types.set(idx, 1) return 1 end
+      if mn == "upper"       do types.set(idx, 4) return 4 end
+      if mn == "lower"       do types.set(idx, 4) return 4 end
+      if mn == "trim"        do types.set(idx, 4) return 4 end
+      if mn == "repeat"      do types.set(idx, 4) return 4 end
+      if mn == "slice"       do types.set(idx, 4) return 4 end
+      if mn == "concat"      do types.set(idx, 4) return 4 end
+      if mn == "contains"    do types.set(idx, 3) return 3 end
+      if mn == "starts_with" do types.set(idx, 3) return 3 end
+      if mn == "ends_with"   do types.set(idx, 3) return 3 end
+      if mn == "eq"          do types.set(idx, 3) return 3 end
+    end
     if mn == "len"   do types.set(idx, 1) return 1 end
     if mn == "push"  do types.set(idx, 6) return 6 end
     if mn == "set"   do types.set(idx, 6) return 6 end
@@ -705,6 +720,10 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
 
   if tag == :field_get do
     obj_t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, node.a)
+    # String .len → int
+    if obj_t == 4 or obj_t == 5 do
+      if node.name == "len" do types.set(idx, 1) return 1 end
+    end
     ft    = field_lookup(fields, obj_t, node.name)
     if ft == 0 and obj_t > 9 do
       # E007: undefined struct field
@@ -741,8 +760,10 @@ defp sema_expr(pool :: []Node, ch :: []int, types :: []int,
   end
 
   if tag == :index do
-    _t  = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, node.a)
-    _t2 = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, node.b)
+    obj_t = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, node.a)
+    _t2   = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, node.b)
+    # String indexing returns int (byte value)
+    if obj_t == 4 or obj_t == 5 do types.set(idx, 1) return 1 end
     types.set(idx, 0)
     return 0
   end
@@ -983,8 +1004,23 @@ defp sema_stmt(pool :: []Node, ch :: []int, types :: []int,
 
   if tag == :for_stmt do
     pre_mark = sym_len
-    _t       = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, node.a)
-    sym_len  = sym_push(syms, sym_len, node.name, 0, 0)
+    iter_t   = sema_expr(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, node.a)
+    # Infer loop variable type from the iterator's element type
+    iter_node = pool.get(node.a)
+    loop_var_t = 1  # default: int (range iteration)
+    loop_var_et = 0
+    if iter_node.tag == :ident do
+      loop_var_et = sym_elem_lookup(syms, sym_len, iter_node.name)
+      if loop_var_et > 0 do loop_var_t = loop_var_et end
+      if loop_var_et == 4 do loop_var_t = 4 end
+      if loop_var_et == 5 do loop_var_t = 5 end
+    end
+    if iter_node.tag == :at_ref do
+      at_bare = str_slice(iter_node.name, 1, str_len(iter_node.name))
+      loop_var_et = sym_elem_lookup(syms, sym_len, at_bare)
+      if loop_var_et > 0 do loop_var_t = loop_var_et end
+    end
+    sym_len  = sym_push(syms, sym_len, node.name, loop_var_t, 0)
     sema_block(pool, ch, types, syms, sym_len, fns, structs, fields, dc, src, file, cur_fn_ret, cur_fn_name, attrs, node.b)
     return pre_mark
   end

@@ -1,0 +1,26 @@
+@score      :: script     = 0
+@high_score :: persistent = 0
+@speed      :: script     = 400.0
+
+@ticks :: script = 0
+
+defp record(s :: int) do
+  if s > @high_score do
+    @high_score = persist_copy(s)
+  end
+end
+
+@score = @score + 10
+print(@score)
+
+speed = @speed * 2.0
+print(speed)
+
+msg = "Score: #{@score}"
+print(msg)
+
+@ticks = @ticks + 1
+print(@ticks)
+
+record(100)
+print(@high_score)

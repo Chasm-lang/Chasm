@@ -261,6 +261,52 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
     cs        = node.b
     cl        = node.c
 
+    # String method dispatch: receiver type is string (4) or atom (5)
+    recv_t = types.get(node.a)
+    if recv_t == 4 or recv_t == 5 do
+      if mn == "len" do
+        return str_concat("chasm_str_len(ctx, ", str_concat(recv_c, ")"))
+      end
+      if mn == "upper" do
+        return str_concat("chasm_str_upper(ctx, ", str_concat(recv_c, ")"))
+      end
+      if mn == "lower" do
+        return str_concat("chasm_str_lower(ctx, ", str_concat(recv_c, ")"))
+      end
+      if mn == "trim" do
+        return str_concat("chasm_str_trim(ctx, ", str_concat(recv_c, ")"))
+      end
+      if mn == "repeat" do
+        arg_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, ch.get(cs))
+        return str_concat("chasm_str_repeat(ctx, ", str_concat(recv_c, str_concat(", ", str_concat(arg_c, ")"))))
+      end
+      if mn == "slice" do
+        a0 = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, ch.get(cs))
+        a1 = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, ch.get(cs + 1))
+        return str_concat("chasm_str_slice(ctx, ", str_concat(recv_c, str_concat(", ", str_concat(a0, str_concat(", ", str_concat(a1, ")"))))))
+      end
+      if mn == "concat" do
+        arg_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, ch.get(cs))
+        return str_concat("chasm_str_concat(ctx, ", str_concat(recv_c, str_concat(", ", str_concat(arg_c, ")"))))
+      end
+      if mn == "contains" do
+        arg_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, ch.get(cs))
+        return str_concat("chasm_str_contains(ctx, ", str_concat(recv_c, str_concat(", ", str_concat(arg_c, ")"))))
+      end
+      if mn == "starts_with" do
+        arg_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, ch.get(cs))
+        return str_concat("chasm_str_starts_with(ctx, ", str_concat(recv_c, str_concat(", ", str_concat(arg_c, ")"))))
+      end
+      if mn == "ends_with" do
+        arg_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, ch.get(cs))
+        return str_concat("chasm_str_ends_with(ctx, ", str_concat(recv_c, str_concat(", ", str_concat(arg_c, ")"))))
+      end
+      if mn == "eq" do
+        arg_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, ch.get(cs))
+        return str_concat("chasm_str_eq(ctx, ", str_concat(recv_c, str_concat(", ", str_concat(arg_c, ")"))))
+      end
+    end
+
     if mn == "len" do
       return str_concat("(", str_concat(recv_c, ").len"))
     end
@@ -389,6 +435,12 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
   if tag == :field_get do
     obj_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
     obj_t = types.get(node.a)
+    # String .len → chasm_str_len
+    if obj_t == 4 or obj_t == 5 do
+      if node.name == "len" do
+        return str_concat("chasm_str_len(ctx, ", str_concat(obj_c, ")"))
+      end
+    end
     # Check if the object is an enum type — emit EnumName_Variant
     obj_node = pool.get(node.a)
     if obj_node.tag == :ident do
@@ -410,6 +462,11 @@ defp emit_expr(pool :: []Node, ch :: []int, types :: []int,
   if tag == :index do
     obj_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.a)
     idx_c = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, node.b)
+    obj_t = types.get(node.a)
+    # String indexing: s[i] → chasm_str_char_at(ctx, s, i)
+    if obj_t == 4 or obj_t == 5 do
+      return str_concat("chasm_str_char_at(ctx, ", str_concat(obj_c, str_concat(", ", str_concat(idx_c, ")"))))
+    end
     return str_concat(obj_c, str_concat("[", str_concat(idx_c, "]")))
   end
 
@@ -861,18 +918,21 @@ defp emit_stmt(pool :: []Node, ch :: []int, types :: []int,
     if iter_node.tag == :ident do
       elem_tid = ve_lookup(var_elems, ve_len, iter_node.name)
     end
+    if iter_node.tag == :at_ref do
+      at_bare = str_slice(iter_node.name, 1, str_len(iter_node.name))
+      elem_tid = ve_lookup(var_elems, ve_len, at_bare)
+    end
     elem_c   = c_type(elem_tid, structs)
     esuf     = array_elem_suffix(structs, elem_tid)
     print(str_concat(ind, "{"))
     ind1 = str_concat(ind, "  ")
     # Store iter in a temp to avoid double-evaluation (e.g. range rvalue)
     print(str_concat(ind1, str_concat("ChasmArray _iter = ", str_concat(iter_c, ";"))))
-    print(str_concat(ind1, "int64_t _fi = 0, _fl = _iter.len;"))
-    print(str_concat(ind1, "while (_fi < _fl) {"))
+    # Use C for-loop so continue correctly increments _fi before re-checking condition
+    print(str_concat(ind1, "for (int64_t _fi = 0; _fi < _iter.len; _fi++) {"))
     ind2 = str_concat(ind1, "  ")
     print(str_concat(ind2, str_concat(elem_c, str_concat(" ", str_concat(var_n, str_concat(" = chasm_array_get", str_concat(esuf, "(ctx, &_iter, _fi);")))))))
     _ve = emit_block_body(pool, ch, types, structs, fns, fields, var_elems, ve_len, depth + 2, node.b)
-    print(str_concat(ind2, "_fi++;"))
     print(str_concat(ind1, "}"))
     print(str_concat(ind, "}"))
     return ve_len
@@ -1276,7 +1336,46 @@ defp emit_fn(pool :: []Node, ch :: []int, types :: []int,
     i = i + 1
   end
   print(str_concat(ret_c, str_concat(" chasm_", str_concat(fn_name, str_concat("(ChasmCtx *ctx", str_concat(params_str, ") {"))))))
-  _ve = emit_block_body(pool, ch, types, structs, fns, fields, var_elems, ve_len, 1, body)
+  # Emit all but the last statement normally, then handle implicit return on the last
+  if body >= 0 do
+    body_node = pool.get(body)
+    bcs = body_node.a
+    bcl = body_node.b
+    # Emit all statements except the last
+    bi = 0
+    while bi < bcl - 1 do
+      child = ch.get(bcs + bi)
+      cn    = pool.get(child)
+      if is_stmt_tag(cn.tag) do
+        ve_len = emit_stmt(pool, ch, types, structs, fns, fields, var_elems, ve_len, 1, child)
+      end
+      bi = bi + 1
+    end
+    # Handle the last statement: if it's an expression and function is non-void, emit return
+    if bcl > 0 do
+      last_child = ch.get(bcs + bcl - 1)
+      last_node  = pool.get(last_child)
+      is_expr_stmt = last_node.tag == :call or last_node.tag == :method_call or
+                     last_node.tag == :binop or last_node.tag == :unary or
+                     last_node.tag == :ident or last_node.tag == :at_ref or
+                     last_node.tag == :int_lit or last_node.tag == :float_lit or
+                     last_node.tag == :string_lit or last_node.tag == :bool_lit or
+                     last_node.tag == :field_get or last_node.tag == :index or
+                     last_node.tag == :struct_lit or last_node.tag == :match_expr or
+                     last_node.tag == :pipe_expr or last_node.tag == :if_stmt
+      is_void_ret = ret_c == "void"
+      already_returns = last_node.tag == :return_stmt or last_node.tag == :if_stmt or
+                        last_node.tag == :while_stmt or last_node.tag == :for_stmt
+      if is_expr_stmt and is_void_ret == false and already_returns == false do
+        ec = emit_expr(pool, ch, types, structs, fns, fields, var_elems, ve_len, last_child)
+        print(str_concat("  return ", str_concat(ec, ";")))
+      else
+        if is_stmt_tag(last_node.tag) do
+          ve_len = emit_stmt(pool, ch, types, structs, fns, fields, var_elems, ve_len, 1, last_child)
+        end
+      end
+    end
+  end
   print("}")
   print("")
 end

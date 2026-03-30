@@ -1,0 +1,30 @@
+greeting = "Hello, world!"
+name  = "Chasm"
+score = 42
+msg   = "#{name} score: #{score}"
+print(msg)
+
+s = "hello"
+n = s.len
+b = s[0]
+print(n)
+print(b)
+
+ch = str_from_char(s[0])
+print(ch)
+
+s2 = "  Hello, Chasm!  "
+print(s2.trim())
+print(s2.trim().lower())
+print(s2.contains("Chasm"))
+print(s2.slice(8, 13))
+
+a = "Hello"
+b2 = ", world"
+print(a.concat(b2))
+print(str_concat(a, b2))
+
+print(int_to_str(42))
+print(float_to_str(3.14))
+print(bool_to_str(true))
+print(str_from_char(65))
