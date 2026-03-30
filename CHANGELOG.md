@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.9.0] — 2026-03-30 — Enum fixes, raylib aliases, doc audit
+
+### Summary
+
+Multi-payload enum variants now emit correct C structs. Bare enum patterns in `case` use integer comparison instead of `strcmp`. Raylib API aliases added for doc-friendly names. Full documentation audit — all code examples verified, template content replaced, platform support updated to show all four platforms.
+
+### Changes
+
+- **fix(codegen)**: multi-payload enum variants (`Rect(float, float)`) emit `struct { float v0; float v1; }` with numbered fields and matching constructor macros
+- **fix(codegen)**: bare enum variant patterns in `case` (`when East`) emit `== Dir_East` instead of `strcmp` when subject type is an enum
+- **fix(codegen)**: multi-payload binding extraction uses `.v0` instead of `.v`
+- **fix(sema)**: enum type names used as namespaces (`State.Idle`, `Dir.East`) no longer fire E001
+- **fix(sema)**: enum variant `field_get` no longer fires E007; returns enum type id
+- **feat(raylib)**: `clear_background`, `draw_rectangle`, `draw_circle_v`, `screen_width`, `screen_height`, `rand_range` aliases added to `raylib.chasm`
+- **feat(raylib)**: `rl_rand_range` added to `chasm_rl.h`
+- **fix(sema)**: `expr_lifetime` — `field_get` on enum returns persistent (compile-time constant); `ident` returns script (conservative); `struct_lit` and `struct_update` propagate field lifetimes
+- **docs**: full audit — all code examples verified and tested; template content replaced with Chasm content; platform support updated (macOS arm64/x86_64, Linux x86_64, Windows x86_64); `script_copy` → `copy_to_script`; `get_fps`/`get_time` → `fps`/`time`; mouse button API corrected; `split_lines` removed; `def main()` examples updated to scripting style; tuple return syntax corrected
+- **chore**: CLI version bumped to `1.9.0`
+- **bootstrap**: three-stage fixpoint verified, binary replaced
+
+---
+
 ## [1.8.0] — 2026-03-29 — Scripting style, if-expressions, string arrays, error fixes
 
 ### Summary
