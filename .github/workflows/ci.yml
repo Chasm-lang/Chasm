@@ -38,13 +38,13 @@ jobs:
         run: |
           echo "c99" > /tmp/chasm_target.txt
           cat compiler/lexer.chasm \
-              compiler/parser_types.chasm compiler/parser_helpers.chasm \
-              compiler/parser_exprs.chasm compiler/parser_stmts.chasm \
-              compiler/sema_types.chasm compiler/sema_diag.chasm \
-              compiler/sema_resolve.chasm compiler/sema_expr.chasm \
-              compiler/sema_stmt.chasm \
-              compiler/codegen_helpers.chasm compiler/codegen_exprs.chasm \
-              compiler/codegen_stmts.chasm compiler/codegen_module.chasm \
+              compiler/parser/types.chasm compiler/parser/helpers.chasm \
+              compiler/parser/exprs.chasm compiler/parser/stmts.chasm \
+              compiler/sema/types.chasm compiler/sema/diag.chasm \
+              compiler/sema/resolve.chasm compiler/sema/expr.chasm \
+              compiler/sema/stmt.chasm \
+              compiler/codegen/helpers.chasm compiler/codegen/exprs.chasm \
+              compiler/codegen/stmts.chasm compiler/codegen/module.chasm \
               compiler/wasm.chasm compiler/main.chasm \
               > /tmp/sema_combined.chasm
 
