@@ -43,10 +43,10 @@ jobs:
               compiler/parser/exprs.chasm compiler/parser/stmts.chasm \
               compiler/sema/types.chasm compiler/sema/diag.chasm \
               compiler/sema/resolve.chasm compiler/sema/expr.chasm \
-              compiler/sema/stmt.chasm \
+              compiler/sema/passes.chasm \
               compiler/codegen/helpers.chasm compiler/codegen/exprs.chasm \
-              compiler/codegen/stmts.chasm compiler/codegen/module.chasm \
-              compiler/wasm.chasm compiler/main.chasm \
+              compiler/codegen/stmts.chasm compiler/codegen/emit.chasm \
+              compiler/codegen/wasm.chasm compiler/main.chasm \
               > /tmp/sema_combined.chasm
           bootstrap/bin/chasm-macos-arm64 > /tmp/compiler.c
 
