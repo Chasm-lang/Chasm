@@ -13,3 +13,4 @@ engine/raylib/.chasm_engine_cache
 examples/**/*.c
 testdata
 chasm-web.worktrees/
+.worktrees/

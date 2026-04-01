@@ -20,6 +20,7 @@ defp expr_lifetime(pool :: []Node, ch :: []int, attrs :: []AttrInfo, idx :: int)
     cl = node.b
     max_lt = 1
     ai = 0
+    
     while ai < cl do
       arg_lt = expr_lifetime(pool, ch, attrs, ch.get(cs + ai))
       if arg_lt > max_lt do max_lt = arg_lt end
