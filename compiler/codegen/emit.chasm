@@ -1,27 +1,27 @@
 
 # ---- Emit typed array helpers for one struct ---------------------------------
 
-defp emit_array_helpers(sn :: string) do
-  print(str_concat("static inline ", str_concat(sn, str_concat(" chasm_array_get_", str_concat(sn, "(ChasmCtx *ctx, ChasmArray *a, int64_t i) {")))))
-  print(str_concat("    static const ", str_concat(sn, " zero = {0};")))
-  print("    if (i < 0 || i >= a->len) return zero;")
-  print(str_concat("    return ((", str_concat(sn, "*)a->data)[i];")))
-  print("}")
-  print(str_concat("static inline void chasm_array_set_", str_concat(sn, str_concat("(ChasmCtx *ctx, ChasmArray *a, int64_t i, ", str_concat(sn, " v) {")))))
-  print(str_concat("    if (i >= 0 && i < a->len) ((", str_concat(sn, "*)a->data)[i] = v;")))
-  print("}")
-  print(str_concat("static inline void chasm_array_push_", str_concat(sn, str_concat("(ChasmCtx *ctx, ChasmArray *a, ", str_concat(sn, " v) {")))))
-  print(str_concat("    if (a->len >= a->cap) { a->cap = a->cap * 2 + 8; a->data = realloc(a->data, (size_t)a->cap * sizeof(", str_concat(sn, ")); }")))
-  print(str_concat("    if (a->data) ((", str_concat(sn, "*)a->data)[a->len++] = v;")))
-  print("}")
-  print(str_concat("static inline ChasmArray chasm_array_fixed_init_", str_concat(sn, str_concat("(ChasmArena *arena, int64_t cap, ", str_concat(sn, " def) {")))))
-  print("    if (cap <= 0) cap = 8;")
-  print(str_concat("    void *d = chasm_alloc(arena, (size_t)cap * sizeof(", str_concat(sn, str_concat("), _Alignof(", str_concat(sn, "));")))))
-  print(str_concat("    if (!d) return (ChasmArray){NULL, 0, cap, (int64_t)sizeof(", str_concat(sn, ")};")))
-  print(str_concat("    ", str_concat(sn, str_concat(" *p = (", str_concat(sn, "*)d; for (int64_t _i = 0; _i < cap; _i++) p[_i] = def;")))))
-  print(str_concat("    return (ChasmArray){d, cap, cap, (int64_t)sizeof(", str_concat(sn, ")};")))
-  print("}")
-  print("")
+defp emit_array_helpers(cctx :: CCtx, sn :: string) do
+  sec_emit(cctx, @SEC_HELP, str_concat("static inline ", str_concat(sn, str_concat(" chasm_array_get_", str_concat(sn, "(ChasmCtx *ctx, ChasmArray *a, int64_t i) {")))))
+  sec_emit(cctx, @SEC_HELP, str_concat("    static const ", str_concat(sn, " zero = {0};")))
+  sec_emit(cctx, @SEC_HELP, "    if (i < 0 || i >= a->len) return zero;")
+  sec_emit(cctx, @SEC_HELP, str_concat("    return ((", str_concat(sn, "*)a->data)[i];")))
+  sec_emit(cctx, @SEC_HELP, "}")
+  sec_emit(cctx, @SEC_HELP, str_concat("static inline void chasm_array_set_", str_concat(sn, str_concat("(ChasmCtx *ctx, ChasmArray *a, int64_t i, ", str_concat(sn, " v) {")))))
+  sec_emit(cctx, @SEC_HELP, str_concat("    if (i >= 0 && i < a->len) ((", str_concat(sn, "*)a->data)[i] = v;")))
+  sec_emit(cctx, @SEC_HELP, "}")
+  sec_emit(cctx, @SEC_HELP, str_concat("static inline void chasm_array_push_", str_concat(sn, str_concat("(ChasmCtx *ctx, ChasmArray *a, ", str_concat(sn, " v) {")))))
+  sec_emit(cctx, @SEC_HELP, str_concat("    if (a->len >= a->cap) { a->cap = a->cap * 2 + 8; a->data = realloc(a->data, (size_t)a->cap * sizeof(", str_concat(sn, ")); }")))
+  sec_emit(cctx, @SEC_HELP, str_concat("    if (a->data) ((", str_concat(sn, "*)a->data)[a->len++] = v;")))
+  sec_emit(cctx, @SEC_HELP, "}")
+  sec_emit(cctx, @SEC_HELP, str_concat("static inline ChasmArray chasm_array_fixed_init_", str_concat(sn, str_concat("(ChasmArena *arena, int64_t cap, ", str_concat(sn, " def) {")))))
+  sec_emit(cctx, @SEC_HELP, "    if (cap <= 0) cap = 8;")
+  sec_emit(cctx, @SEC_HELP, str_concat("    void *d = chasm_alloc(arena, (size_t)cap * sizeof(", str_concat(sn, str_concat("), _Alignof(", str_concat(sn, "));")))))
+  sec_emit(cctx, @SEC_HELP, str_concat("    if (!d) return (ChasmArray){NULL, 0, cap, (int64_t)sizeof(", str_concat(sn, ")};")))
+  sec_emit(cctx, @SEC_HELP, str_concat("    ", str_concat(sn, str_concat(" *p = (", str_concat(sn, "*)d; for (int64_t _i = 0; _i < cap; _i++) p[_i] = def;")))))
+  sec_emit(cctx, @SEC_HELP, str_concat("    return (ChasmArray){d, cap, cap, (int64_t)sizeof(", str_concat(sn, ")};")))
+  sec_emit(cctx, @SEC_HELP, "}")
+  sec_emit(cctx, @SEC_HELP, "")
 end
 
 # ---- Emit enum typedef -------------------------------------------------------
