@@ -179,6 +179,62 @@ defp lower_expr(lctx :: LowerCtx, idx :: int) :: IRVal do
     return dst
   end
 
+  if tag == :call do
+    args_start = lctx.arg_len.get(0)
+    ac2        = node.b
+    ai2        = 0
+    while ai2 < ac2 do
+      arg_node_idx = lctx.ch.get(node.a + ai2)
+      av = lower_expr(lctx, arg_node_idx)
+      lctx_push_arg(lctx, av)
+      ai2 = ai2 + 1
+    end
+    dst = lctx_tmp(lctx, tid)
+    lctx_emit(lctx, IROp{ op: :call, dst: dst, a: irval_void(), b: irval_void(),
+      name: node.name, ai: args_start, ac: ac2, line: node.line, col: node.col })
+    return dst
+  end
+
+  if tag == :method_call do
+    recv_v     = lower_expr(lctx, node.a)
+    args_start3 = lctx.arg_len.get(0)
+    lctx_push_arg(lctx, recv_v)
+    ac3 = node.b
+    ai3 = 0
+    while ai3 < ac3 do
+      arg_node_idx3 = lctx.ch.get(node.c + ai3)
+      av3 = lower_expr(lctx, arg_node_idx3)
+      lctx_push_arg(lctx, av3)
+      ai3 = ai3 + 1
+    end
+    total_ac3 = ac3 + 1
+    dst3 = lctx_tmp(lctx, tid)
+    lctx_emit(lctx, IROp{ op: :method_call, dst: dst3, a: recv_v, b: irval_void(),
+      name: node.name, ai: args_start3, ac: total_ac3, line: node.line, col: node.col })
+    return dst3
+  end
+
+  if tag == :pipe_expr do
+    pipe_val    = lower_expr(lctx, node.a)
+    call_node :: Node = lctx.pool.get(node.b)
+    args_start4 = lctx.arg_len.get(0)
+    lctx_push_arg(lctx, pipe_val)
+    ac4 = call_node.b
+    ai4 = 0
+    while ai4 < ac4 do
+      arg_node_idx4 = lctx.ch.get(call_node.a + ai4)
+      av4 = lower_expr(lctx, arg_node_idx4)
+      lctx_push_arg(lctx, av4)
+      ai4 = ai4 + 1
+    end
+    total_ac4 = ac4 + 1
+    call_tid4  = lctx.types.get(node.b)
+    dst4 = lctx_tmp(lctx, call_tid4)
+    lctx_emit(lctx, IROp{ op: :call, dst: dst4, a: irval_void(), b: irval_void(),
+      name: call_node.name, ai: args_start4, ac: total_ac4, line: node.line, col: node.col })
+    return dst4
+  end
+
   # Remaining expression cases added in Tasks 5-7
   return irval_void()
 end
