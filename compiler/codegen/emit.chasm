@@ -398,7 +398,7 @@ defp emit_fn(cctx :: CCtx, fn_idx :: int, root :: int) do
     end
     i = i + 1
   end
-  print(str_concat(ret_c, str_concat(" chasm_", str_concat(fn_name, str_concat("(ChasmCtx *ctx", str_concat(params_str, ") {"))))))
+  sec_emit(cctx, @SEC_BODY, str_concat(ret_c, str_concat(" chasm_", str_concat(fn_name, str_concat("(ChasmCtx *ctx", str_concat(params_str, ") {"))))))
   # Emit all but the last statement normally, then handle implicit return on the last
   if body >= 0 do
     body_node :: Node = cctx.pool.get(body)
@@ -431,7 +431,7 @@ defp emit_fn(cctx :: CCtx, fn_idx :: int, root :: int) do
                         last_node.tag == :while_stmt or last_node.tag == :for_stmt
       if is_expr_stmt and is_void_ret == false and already_returns == false do
         ec = emit_expr(cctx, var_elems, ve_len, last_child)
-        print(str_concat("  return ", str_concat(ec, ";")))
+        sec_emit(cctx, @SEC_BODY, str_concat("  return ", str_concat(ec, ";")))
       else
         if is_stmt_tag(last_node.tag) do
           ve_len = emit_stmt(cctx, var_elems, ve_len, 1, last_child)
@@ -439,8 +439,8 @@ defp emit_fn(cctx :: CCtx, fn_idx :: int, root :: int) do
       end
     end
   end
-  print("}")
-  print("")
+  sec_emit(cctx, @SEC_BODY, "}")
+  sec_emit(cctx, @SEC_BODY, "")
 end
 
 # ---- Flush all output sections to stdout in order ----------------------------
