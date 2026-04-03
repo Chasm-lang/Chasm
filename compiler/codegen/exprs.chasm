@@ -1,6 +1,6 @@
 defp emit_expr_call(cctx :: CCtx,
-                    var_elems :: []VarElem, ve_len :: int,
-                    idx :: int) :: string do
+var_elems :: []VarElem, ve_len :: int,
+idx :: int) :: string do
   node :: Node = cctx.pool.get(idx)
   cs      = node.a
   cl      = node.b
@@ -63,8 +63,8 @@ defp emit_expr_call(cctx :: CCtx,
 end
 
 defp emit_expr_method_call(cctx :: CCtx,
-                           var_elems :: []VarElem, ve_len :: int,
-                           idx :: int) :: string do
+var_elems :: []VarElem, ve_len :: int,
+idx :: int) :: string do
   node :: Node = cctx.pool.get(idx)
   recv_node :: Node = cctx.pool.get(node.a)
   recv_c    = emit_expr(cctx, var_elems, ve_len, node.a)
@@ -241,8 +241,8 @@ defp emit_expr_method_call(cctx :: CCtx,
 end
 
 defp emit_expr_struct_lit(cctx :: CCtx,
-                          var_elems :: []VarElem, ve_len :: int,
-                          idx :: int) :: string do
+var_elems :: []VarElem, ve_len :: int,
+idx :: int) :: string do
   node :: Node = cctx.pool.get(idx)
   cs          = node.a
   cl          = node.b
@@ -295,8 +295,8 @@ defp emit_expr_struct_lit(cctx :: CCtx,
 end
 
 defp emit_expr_struct_update(cctx :: CCtx,
-                             var_elems :: []VarElem, ve_len :: int,
-                             idx :: int) :: string do
+var_elems :: []VarElem, ve_len :: int,
+idx :: int) :: string do
   node :: Node = cctx.pool.get(idx)
   struct_name = node.name
   base_c      = emit_expr(cctx, var_elems, ve_len, node.a)
@@ -343,8 +343,8 @@ defp emit_expr_struct_update(cctx :: CCtx,
 end
 
 defp emit_expr_match(cctx :: CCtx,
-                     var_elems :: []VarElem, ve_len :: int,
-                     idx :: int) :: string do
+var_elems :: []VarElem, ve_len :: int,
+idx :: int) :: string do
   node :: Node = cctx.pool.get(idx)
   subj_c    = emit_expr(cctx, var_elems, ve_len, node.a)
   subj_t    = cctx.types.get(node.a)
@@ -469,8 +469,8 @@ defp emit_expr_match(cctx :: CCtx,
 end
 
 defp emit_expr_pipe(cctx :: CCtx,
-                    var_elems :: []VarElem, ve_len :: int,
-                    idx :: int) :: string do
+var_elems :: []VarElem, ve_len :: int,
+idx :: int) :: string do
   node :: Node = cctx.pool.get(idx)
   lhs_c    = emit_expr(cctx, var_elems, ve_len, node.a)
   rhs_node :: Node = cctx.pool.get(node.b)
@@ -492,8 +492,8 @@ defp emit_expr_pipe(cctx :: CCtx,
 end
 
 defp emit_expr_interp(cctx :: CCtx,
-                      var_elems :: []VarElem, ve_len :: int,
-                      idx :: int) :: string do
+var_elems :: []VarElem, ve_len :: int,
+idx :: int) :: string do
   node :: Node = cctx.pool.get(idx)
   inner_c = emit_expr(cctx, var_elems, ve_len, node.a)
   inner_t = cctx.types.get(node.a)
@@ -504,8 +504,8 @@ defp emit_expr_interp(cctx :: CCtx,
 end
 
 defp emit_expr_tuple_lit(cctx :: CCtx,
-                         var_elems :: []VarElem, ve_len :: int,
-                         idx :: int) :: string do
+var_elems :: []VarElem, ve_len :: int,
+idx :: int) :: string do
   node :: Node = cctx.pool.get(idx)
   ts = node.a
   tl = node.b
@@ -524,8 +524,8 @@ defp emit_expr_tuple_lit(cctx :: CCtx,
 end
 
 defp emit_expr_if_value(cctx :: CCtx,
-                        var_elems :: []VarElem, ve_len :: int,
-                        idx :: int) :: string do
+var_elems :: []VarElem, ve_len :: int,
+idx :: int) :: string do
   node :: Node = cctx.pool.get(idx)
   cond_c    = emit_expr(cctx, var_elems, ve_len, node.a)
   then_node :: Node = cctx.pool.get(node.b)
@@ -545,8 +545,8 @@ end
 # which calls emit_stmt; emit_expr is self-recursive.
 
 defp emit_expr(cctx :: CCtx,
-               var_elems :: []VarElem, ve_len :: int,
-               idx :: int) :: string do
+var_elems :: []VarElem, ve_len :: int,
+idx :: int) :: string do
   if idx < 0 do return "0" end
   node :: Node = cctx.pool.get(idx)
   tag  = node.tag

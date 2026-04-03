@@ -192,7 +192,7 @@ defp emit_enum_def(cctx :: CCtx, pool :: []Node, ch :: []int, structs :: []Struc
             end
             ci5 = ci5 + 1
           end
-          sec_emit(cctx, @SEC_TYPES, str_concat("#define ", str_concat(ename, str_concat("_make_", str_concat(vname, str_concat("(", str_concat(params_str, str_concat(") (", str_concat(ename, str_concat("){ .tag = ", str_concat(ename, str_concat("_", str_concat(vname, str_concat(", ", str_concat(assign_str, " }")))))))))))))))))
+          sec_emit(cctx, @SEC_TYPES, str_concat("#define ", str_concat(ename, str_concat("_make_", str_concat(vname, str_concat("(", str_concat(params_str, str_concat(") (", str_concat(ename, str_concat("){ .tag = ", str_concat(ename, str_concat("_", str_concat(vname, str_concat(", ", str_concat(assign_str, " }")))))))))))))))
         end
       end
       i = i + 1

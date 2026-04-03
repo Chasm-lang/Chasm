@@ -6,17 +6,17 @@
 
 defp is_stmt_tag(tag :: atom) :: bool do
   return tag == :var_decl or tag == :assign or tag == :return_stmt or
-         tag == :if_stmt   or tag == :while_stmt or tag == :for_stmt  or
-         tag == :break_stmt or tag == :continue_stmt or
-         tag == :call or tag == :method_call or tag == :at_assign or
-         tag == :tuple_dest
+  tag == :if_stmt   or tag == :while_stmt or tag == :for_stmt  or
+  tag == :break_stmt or tag == :continue_stmt or
+  tag == :call or tag == :method_call or tag == :at_assign or
+  tag == :tuple_dest
 end
 
 # ---- Emit block body (forward reference: emit_stmt defined below) -----------
 
 defp emit_block_body(cctx :: CCtx,
-                     var_elems :: []VarElem, ve_len :: int,
-                     depth :: int, block_idx :: int) :: int do
+var_elems :: []VarElem, ve_len :: int,
+depth :: int, block_idx :: int) :: int do
   if block_idx < 0 do return ve_len end
   node :: Node = cctx.pool.get(block_idx)
   cs   = node.a
@@ -36,8 +36,8 @@ end
 # ---- Emit statement (returns updated ve_len) ---------------------------------
 
 defp emit_stmt(cctx :: CCtx,
-               var_elems :: []VarElem, ve_len :: int,
-               depth :: int, idx :: int) :: int do
+var_elems :: []VarElem, ve_len :: int,
+depth :: int, idx :: int) :: int do
   if idx < 0 do return ve_len end
   node :: Node = cctx.pool.get(idx)
   tag  = node.tag

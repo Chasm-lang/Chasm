@@ -6,21 +6,21 @@
 # ---- Output section IDs -------------------------------------------------------
 # Sections are flushed in numeric order by flush_sections().
 
-@SEC_BUF_CAP = 65536   # max lines per section (guards against overflow)
+@SEC_BUF_CAP = 65536# max lines per section (guards against overflow)
 
-@SEC_PRE   = 0   # preamble: header comment, #include
-@SEC_TYPES = 1   # enum and struct typedefs
-@SEC_HELP  = 2   # typed array helpers
-@SEC_FWD   = 3   # function forward declarations
-@SEC_BODY  = 4   # function bodies, module attrs, chasm_main
+@SEC_PRE   = 0# preamble: header comment, #include
+@SEC_TYPES = 1# enum and struct typedefs
+@SEC_HELP  = 2# typed array helpers
+@SEC_FWD   = 3# function forward declarations
+@SEC_BODY  = 4# function bodies, module attrs, chasm_main
 
 defstruct SectionBuf do
-  lines  :: []string
+  lines :: []string
   cursor :: []int
 end
 
 defp make_section_buf() :: SectionBuf do
-  lines  :: []string = []
+  lines :: []string = []
   cursor :: []int    = []
   cursor.push(0)
   empty  = ""
@@ -33,18 +33,18 @@ defp make_section_buf() :: SectionBuf do
 end
 
 defstruct CCtx do
-  pool     :: []Node
-  ch       :: []int
-  types    :: []int
-  structs  :: []StructDef
-  fns      :: []FnSig
-  fields   :: []FieldDef
+  pool :: []Node
+  ch :: []int
+  types :: []int
+  structs :: []StructDef
+  fns :: []FnSig
+  fields :: []FieldDef
   sections :: []SectionBuf
 end
 
 defp make_cctx(pool :: []Node, ch :: []int, types :: []int,
-               structs :: []StructDef, fns :: []FnSig,
-               fields :: []FieldDef) :: CCtx do
+structs :: []StructDef, fns :: []FnSig,
+fields :: []FieldDef) :: CCtx do
   sections :: []SectionBuf = []
   i = 0
   while i < 5 do
@@ -66,12 +66,12 @@ end
 # ---- VarElem: per-variable array element type --------------------------------
 
 defstruct VarElem do
-  name     :: string
+  name :: string
   elem_tid :: int
 end
 
 defp make_ve_pool(cap :: int) :: []VarElem do
-  pool  :: []VarElem = []
+  pool :: []VarElem = []
   empty :: VarElem   = VarElem{ name: "", elem_tid: 0 }
   i = 0
   while i < cap do
@@ -173,6 +173,7 @@ end
 # Strip one level of outer parens from a condition string.
 # binop always returns "(lhs op rhs)" — when used directly as an if/while
 # condition the surrounding if(...) would double-wrap. Strip first.
+
 defp unwrap_cond(s :: string) :: string do
   n = str_len(s)
   if n >= 2 do
@@ -184,4 +185,3 @@ defp unwrap_cond(s :: string) :: string do
 end
 
 # ---- emit_expr helpers (each handles one complex tag) -----------------------
-

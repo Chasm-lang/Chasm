@@ -1,4 +1,4 @@
-defp parse_string_interp(pool :: []Node, np :: int, ch :: []int, cp :: int, pos :: int, lx :: string, line :: int, col :: int) :: ParseResult do
+defp parse_string_interp(pool :: []Node, np :: int, ch :: []int, cp :: int, pos :: int, lx :: string, line :: int, col :: int, dc :: DiagCollector) :: ParseResult do
   pos = pos + 1
   # Check for string interpolation: "...#{expr}..."
   # Scan the raw lexeme (without surrounding quotes) for #{
@@ -66,7 +66,7 @@ defp parse_string_interp(pool :: []Node, np :: int, ch :: []int, cp :: int, pos 
         seg_start = ri
         # Re-lex and parse the expression
         expr_tokens = lex(expr_src)
-        er = parse_expr(expr_tokens, pool, np, ch, cp, 0)
+        er = parse_expr(expr_tokens, pool, np, ch, cp, 0, dc)
         np = er.np
         cp = er.cp
         expr_node = er.node_idx
@@ -329,7 +329,7 @@ defp parse_primary(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, cp
     return ParseResult{ pos: pos, np: np, cp: cp, node_idx: node_idx }
   end
   if k == :string_lit do
-    return parse_string_interp(pool, np, ch, cp, pos, lx, line, col)
+    return parse_string_interp(pool, np, ch, cp, pos, lx, line, col, dc)
   end
   if k == :atom_lit do
     pos = pos + 1
