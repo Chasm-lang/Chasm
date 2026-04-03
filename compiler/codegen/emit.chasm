@@ -49,14 +49,14 @@ defp enum_has_payloads(pool :: []Node, ch :: []int, decl_idx :: int) :: bool do
   return false
 end
 
-defp emit_enum_def(pool :: []Node, ch :: []int, structs :: []StructDef, decl_idx :: int) do
+defp emit_enum_def(cctx :: CCtx, pool :: []Node, ch :: []int, structs :: []StructDef, decl_idx :: int) do
   decl  = pool.get(decl_idx)
   ename = decl.name
   vs    = decl.a
   vl    = decl.b
   has_p = enum_has_payloads(pool, ch, decl_idx)
   # Emit the tag enum
-  print("typedef enum {")
+  sec_emit(cctx, @SEC_TYPES, "typedef enum {")
   i = 0
   while i < vl do
     vi   = ch.get(vs + i)
@@ -73,16 +73,16 @@ defp emit_enum_def(pool :: []Node, ch :: []int, structs :: []StructDef, decl_idx
     end
     comma = ","
     if i == vl - 1 do comma = "" end
-    print(str_concat("  ", str_concat(ename, str_concat("_", str_concat(vname, str_concat(" = ", str_concat(int_to_str(i), comma)))))))
+    sec_emit(cctx, @SEC_TYPES, str_concat("  ", str_concat(ename, str_concat("_", str_concat(vname, str_concat(" = ", str_concat(int_to_str(i), comma)))))))
     i = i + 1
   end
-  print(str_concat("} ", str_concat(ename, "_Tag;")))
-  print("")
+  sec_emit(cctx, @SEC_TYPES, str_concat("} ", str_concat(ename, "_Tag;")))
+  sec_emit(cctx, @SEC_TYPES, "")
   if has_p do
     # Emit tagged union struct
-    print("typedef struct {")
-    print(str_concat("  ", str_concat(ename, "_Tag tag;")))
-    print("  union {")
+    sec_emit(cctx, @SEC_TYPES, "typedef struct {")
+    sec_emit(cctx, @SEC_TYPES, str_concat("  ", str_concat(ename, "_Tag tag;")))
+    sec_emit(cctx, @SEC_TYPES, "  union {")
     i = 0
     while i < vl do
       vi   = ch.get(vs + i)
@@ -109,7 +109,7 @@ defp emit_enum_def(pool :: []Node, ch :: []int, structs :: []StructDef, decl_idx
         end
         if field_count == 1 do
           # Single payload: struct { type v; } Variant;
-          print(str_concat("    struct { ", str_concat(payload_types, str_concat(" v; } ", str_concat(vname, ";")))))
+          sec_emit(cctx, @SEC_TYPES, str_concat("    struct { ", str_concat(payload_types, str_concat(" v; } ", str_concat(vname, ";")))))
         else
           # Multi payload: struct { type0 v0; type1 v1; ... } Variant;
           fields_str = ""
@@ -130,14 +130,14 @@ defp emit_enum_def(pool :: []Node, ch :: []int, structs :: []StructDef, decl_idx
             end
             ci3 = ci3 + 1
           end
-          print(str_concat("    struct { ", str_concat(fields_str, str_concat("} ", str_concat(vname, ";")))))
+          sec_emit(cctx, @SEC_TYPES, str_concat("    struct { ", str_concat(fields_str, str_concat("} ", str_concat(vname, ";")))))
         end
       end
       i = i + 1
     end
-    print("  };")
-    print(str_concat("} ", str_concat(ename, ";")))
-    print("")
+    sec_emit(cctx, @SEC_TYPES, "  };")
+    sec_emit(cctx, @SEC_TYPES, str_concat("} ", str_concat(ename, ";")))
+    sec_emit(cctx, @SEC_TYPES, "")
     # Emit constructor macros for each payload variant
     i = 0
     while i < vl do
@@ -165,7 +165,7 @@ defp emit_enum_def(pool :: []Node, ch :: []int, structs :: []StructDef, decl_idx
         end
         if field_count2 == 1 do
           # Single: #define Enum_make_V(val) (Enum){ .tag=Enum_V, .V.v=(val) }
-          print(str_concat("#define ", str_concat(ename, str_concat("_make_", str_concat(vname, str_concat("(val) (", str_concat(ename, str_concat("){ .tag = ", str_concat(ename, str_concat("_", str_concat(vname, str_concat(", .", str_concat(vname, str_concat(".v = (val) }", ""))))))))))))))
+          sec_emit(cctx, @SEC_TYPES, str_concat("#define ", str_concat(ename, str_concat("_make_", str_concat(vname, str_concat("(val) (", str_concat(ename, str_concat("){ .tag = ", str_concat(ename, str_concat("_", str_concat(vname, str_concat(", .", str_concat(vname, str_concat(".v = (val) }", ""))))))))))))))
         else
           # Multi: build param list (v0,v1,...) and assignment list
           params_str = ""
@@ -192,16 +192,16 @@ defp emit_enum_def(pool :: []Node, ch :: []int, structs :: []StructDef, decl_idx
             end
             ci5 = ci5 + 1
           end
-          print(str_concat("#define ", str_concat(ename, str_concat("_make_", str_concat(vname, str_concat("(", str_concat(params_str, str_concat(") (", str_concat(ename, str_concat("){ .tag = ", str_concat(ename, str_concat("_", str_concat(vname, str_concat(", ", str_concat(assign_str, " }")))))))))))))))))
+          sec_emit(cctx, @SEC_TYPES, str_concat("#define ", str_concat(ename, str_concat("_make_", str_concat(vname, str_concat("(", str_concat(params_str, str_concat(") (", str_concat(ename, str_concat("){ .tag = ", str_concat(ename, str_concat("_", str_concat(vname, str_concat(", ", str_concat(assign_str, " }")))))))))))))))))
         end
       end
       i = i + 1
     end
-    print("")
+    sec_emit(cctx, @SEC_TYPES, "")
   else
     # Tag-only: typedef the tag enum directly as the type
-    print(str_concat("typedef ", str_concat(ename, str_concat("_Tag ", str_concat(ename, ";")))))
-    print("")
+    sec_emit(cctx, @SEC_TYPES, str_concat("typedef ", str_concat(ename, str_concat("_Tag ", str_concat(ename, ";")))))
+    sec_emit(cctx, @SEC_TYPES, "")
   end
 end
 
