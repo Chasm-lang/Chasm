@@ -324,6 +324,98 @@ defp lower_expr(lctx :: LowerCtx, idx :: int) :: IRVal do
     return dst8
   end
 
+  if tag == :interp_expr do
+    seg_count9 = node.b
+    if seg_count9 == 0 do
+      dst9 = lctx_tmp(lctx, @TID_STRING)
+      lctx_emit(lctx, IROp{ op: :lit_str, dst: dst9, a: irval_void(), b: irval_void(),
+        name: "\042\042", ai: 0, ac: 0, line: node.line, col: node.col })
+      return dst9
+    end
+    acc9 = lower_expr(lctx, lctx.ch.get(node.a))
+    si9 = 1
+    while si9 < seg_count9 do
+      seg_idx9 = lctx.ch.get(node.a + si9)
+      seg_v9   = lower_expr(lctx, seg_idx9)
+      seg_t9   = seg_v9.tid
+      if seg_t9 != @TID_STRING and seg_t9 != @TID_ATOM do
+        conv_fn9 = "int_to_str"
+        if seg_t9 == @TID_FLOAT do conv_fn9 = "float_to_str" end
+        if seg_t9 == @TID_BOOL  do conv_fn9 = "bool_to_str"  end
+        as9b = lctx.arg_len.get(0)
+        lctx_push_arg(lctx, seg_v9)
+        str9 = lctx_tmp(lctx, @TID_STRING)
+        lctx_emit(lctx, IROp{ op: :call, dst: str9, a: irval_void(), b: irval_void(),
+          name: conv_fn9, ai: as9b, ac: 1, line: node.line, col: node.col })
+        seg_v9 = str9
+      end
+      as9c = lctx.arg_len.get(0)
+      lctx_push_arg(lctx, acc9)
+      lctx_push_arg(lctx, seg_v9)
+      new_acc9 = lctx_tmp(lctx, @TID_STRING)
+      lctx_emit(lctx, IROp{ op: :call, dst: new_acc9, a: irval_void(), b: irval_void(),
+        name: "str_concat", ai: as9c, ac: 2, line: node.line, col: node.col })
+      acc9 = new_acc9
+      si9 = si9 + 1
+    end
+    return acc9
+  end
+
+  if tag == :if_stmt do
+    cond_v10 = lower_expr(lctx, node.a)
+    dst10    = lctx_tmp(lctx, tid)
+    lctx_emit(lctx, IROp{ op: :if_begin, dst: irval_void(), a: cond_v10, b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    then_v10 = lower_expr(lctx, node.b)
+    lctx_emit(lctx, IROp{ op: :assign, dst: dst10, a: then_v10, b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    lctx_emit(lctx, IROp{ op: :if_else, dst: irval_void(), a: irval_void(), b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    else_v10 = lower_expr(lctx, node.c)
+    lctx_emit(lctx, IROp{ op: :assign, dst: dst10, a: else_v10, b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    lctx_emit(lctx, IROp{ op: :if_end, dst: irval_void(), a: irval_void(), b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    return dst10
+  end
+
+  if tag == :match_expr do
+    subj_v11   = lower_expr(lctx, node.a)
+    dst11      = lctx_tmp(lctx, tid)
+    ci11 = 0
+    while ci11 < node.b do
+      case_idx11 = lctx.ch.get(node.c + ci11)
+      case_nd11 :: Node = lctx.pool.get(case_idx11)
+      pat_v11  = lower_expr(lctx, case_nd11.a)
+      eq_v11   = lctx_tmp(lctx, @TID_BOOL)
+      lctx_emit(lctx, IROp{ op: :binop, dst: eq_v11, a: subj_v11, b: pat_v11,
+        name: "==", ai: 0, ac: 0, line: case_nd11.line, col: case_nd11.col })
+      lctx_emit(lctx, IROp{ op: :if_begin, dst: irval_void(), a: eq_v11, b: irval_void(),
+        name: "", ai: 0, ac: 0, line: case_nd11.line, col: case_nd11.col })
+      body_v11 = lower_expr(lctx, case_nd11.b)
+      lctx_emit(lctx, IROp{ op: :assign, dst: dst11, a: body_v11, b: irval_void(),
+        name: "", ai: 0, ac: 0, line: case_nd11.line, col: case_nd11.col })
+      lctx_emit(lctx, IROp{ op: :if_end, dst: irval_void(), a: irval_void(), b: irval_void(),
+        name: "", ai: 0, ac: 0, line: case_nd11.line, col: case_nd11.col })
+      ci11 = ci11 + 1
+    end
+    return dst11
+  end
+
+  if tag == :tuple_lit do
+    as12 = lctx.arg_len.get(0)
+    ti12 = 0
+    while ti12 < node.b do
+      el_v12 = lower_expr(lctx, lctx.ch.get(node.a + ti12))
+      lctx_push_arg(lctx, el_v12)
+      ti12 = ti12 + 1
+    end
+    dst12 = lctx_tmp(lctx, tid)
+    lctx_emit(lctx, IROp{ op: :tuple_new, dst: dst12, a: irval_void(), b: irval_void(),
+      name: "", ai: as12, ac: node.b, line: node.line, col: node.col })
+    return dst12
+  end
+
   # Remaining expression cases added in Tasks 5-7
   return irval_void()
 end
