@@ -14,3 +14,4 @@ examples/**/*.c
 testdata
 chasm-web
 .worktrees/
+docs/superpowers/
