@@ -443,6 +443,22 @@ defp emit_fn(cctx :: CCtx, fn_idx :: int, root :: int) do
   print("")
 end
 
+# ---- Flush all output sections to stdout in order ----------------------------
+
+defp flush_sections(cctx :: CCtx) do
+  sec_id = 0
+  while sec_id < 5 do
+    sb = cctx.sections.get(sec_id)
+    n  = sb.cursor.get(0)
+    i  = 0
+    while i < n do
+      print(sb.lines.get(i))
+      i = i + 1
+    end
+    sec_id = sec_id + 1
+  end
+end
+
 # ---- Top-level codegen entry point ------------------------------------------
 
 defp codegen(pool :: []Node, ch :: []int, root :: int,
