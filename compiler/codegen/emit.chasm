@@ -207,7 +207,7 @@ end
 
 
 
-defp emit_struct_defs(structs :: []StructDef, fields :: []FieldDef, pool :: []Node, ch :: []int) do
+defp emit_struct_defs(cctx :: CCtx, structs :: []StructDef, fields :: []FieldDef, pool :: []Node, ch :: []int) do
   if structs.len == 0 do return end
   # First pass: emit enums
   has_enums = false
@@ -217,10 +217,10 @@ defp emit_struct_defs(structs :: []StructDef, fields :: []FieldDef, pool :: []No
     sn = pool.get(sd.node_idx)
     if sn.tag == :enum_decl do
       if has_enums == false do
-        print("/* Enum types */")
+        sec_emit(cctx, @SEC_TYPES, "/* Enum types */")
         has_enums = true
       end
-      emit_enum_def(pool, ch, structs, sd.node_idx)
+      emit_enum_def(cctx, pool, ch, structs, sd.node_idx)
     end
     si = si + 1
   end
@@ -232,31 +232,31 @@ defp emit_struct_defs(structs :: []StructDef, fields :: []FieldDef, pool :: []No
     sn = pool.get(sd.node_idx)
     if sn.tag == :defstruct do
       if has_structs == false do
-        print("/* Struct types */")
+        sec_emit(cctx, @SEC_TYPES, "/* Struct types */")
         has_structs = true
       end
-      print("typedef struct {")
+      sec_emit(cctx, @SEC_TYPES, "typedef struct {")
       fi = 0
       while fi < fields.len do
         fd = fields.get(fi)
         if fd.struct_tid == sd.type_id do
-          print(str_concat("    ", str_concat(c_type(fd.type_id, structs), str_concat(" ", str_concat(fd.name, ";")))))
+          sec_emit(cctx, @SEC_TYPES, str_concat("    ", str_concat(c_type(fd.type_id, structs), str_concat(" ", str_concat(fd.name, ";")))))
         end
         fi = fi + 1
       end
-      print(str_concat("} ", str_concat(sd.name, ";")))
-      print("")
+      sec_emit(cctx, @SEC_TYPES, str_concat("} ", str_concat(sd.name, ";")))
+      sec_emit(cctx, @SEC_TYPES, "")
     end
     si = si + 1
   end
   if has_structs do
-    print("/* Typed array helpers */")
+    sec_emit(cctx, @SEC_HELP, "/* Typed array helpers */")
     si = 0
     while si < structs.len do
       sd = structs.get(si)
       sn = pool.get(sd.node_idx)
       if sn.tag == :defstruct do
-        emit_array_helpers(sd.name)
+        emit_array_helpers(cctx, sd.name)
       end
       si = si + 1
     end
@@ -294,9 +294,9 @@ defp fn_actual_ret_c(pool :: []Node, ch :: []int, fn_idx :: int, structs :: []St
   return c_type(ret_tid, structs)
 end
 
-defp emit_fwd_decls(pool :: []Node, ch :: []int, structs :: []StructDef, fns :: []FnSig) do
+defp emit_fwd_decls(cctx :: CCtx, pool :: []Node, ch :: []int, structs :: []StructDef, fns :: []FnSig) do
   if fns.len == 0 do return end
-  print("/* Forward declarations */")
+  sec_emit(cctx, @SEC_FWD, "/* Forward declarations */")
   i = 0
   while i < fns.len do
     f        = fns.get(i)
@@ -315,10 +315,10 @@ defp emit_fwd_decls(pool :: []Node, ch :: []int, structs :: []StructDef, fns :: 
       params_s   = str_concat(params_s, str_concat(", ", param_c))
       j = j + 1
     end
-    print(str_concat(ret_c, str_concat(" chasm_", str_concat(f.name, str_concat("(ChasmCtx *ctx", str_concat(params_s, ");"))))))
+    sec_emit(cctx, @SEC_FWD, str_concat(ret_c, str_concat(" chasm_", str_concat(f.name, str_concat("(ChasmCtx *ctx", str_concat(params_s, ");"))))))
     i = i + 1
   end
-  print("")
+  sec_emit(cctx, @SEC_FWD, "")
 end
 
 # ---- Pre-populate @attr lifetimes and array elem types into var_elems --------
