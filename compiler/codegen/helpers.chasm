@@ -33,18 +33,34 @@ defp make_section_buf() :: SectionBuf do
 end
 
 defstruct CCtx do
-  pool    :: []Node
-  ch      :: []int
-  types   :: []int
-  structs :: []StructDef
-  fns     :: []FnSig
-  fields  :: []FieldDef
+  pool     :: []Node
+  ch       :: []int
+  types    :: []int
+  structs  :: []StructDef
+  fns      :: []FnSig
+  fields   :: []FieldDef
+  sections :: []SectionBuf
 end
 
 defp make_cctx(pool :: []Node, ch :: []int, types :: []int,
                structs :: []StructDef, fns :: []FnSig,
                fields :: []FieldDef) :: CCtx do
-  return CCtx{ pool: pool, ch: ch, types: types, structs: structs, fns: fns, fields: fields }
+  sections :: []SectionBuf = []
+  i = 0
+  while i < 5 do
+    sections.push(make_section_buf())
+    i = i + 1
+  end
+  return CCtx{ pool: pool, ch: ch, types: types, structs: structs, fns: fns, fields: fields, sections: sections }
+end
+
+defp sec_emit(cctx :: CCtx, sec_id :: int, line :: string) do
+  sb = cctx.sections.get(sec_id)
+  n  = sb.cursor.get(0)
+  if n < @SEC_BUF_CAP do
+    sb.lines.set(n, line)
+    sb.cursor.set(0, n + 1)
+  end
 end
 
 # ---- VarElem: per-variable array element type --------------------------------
