@@ -1,0 +1,57 @@
+# ---- IR value: a typed reference (temporary or named variable) ----------------
+
+defstruct IRVal do
+  tmp      :: string   # "t0", "t1", ... or source variable name; empty = void
+  tid      :: int      # resolved type ID (TID_INT, TID_STRING, struct tid, etc.)
+  elem_tid :: int      # for arrays: element type ID; 0 otherwise
+end
+
+# ---- IROp: one flat instruction -----------------------------------------------
+
+defstruct IROp do
+  op   :: atom     # see op table in design doc
+  dst  :: IRVal    # result (empty tmp = no result)
+  a    :: IRVal    # primary operand
+  b    :: IRVal    # secondary operand
+  name :: string   # fn/field/operator/literal value
+  ai   :: int      # index into IRProg.args pool (for calls, struct_new)
+  ac   :: int      # arg count
+  line :: int
+  col  :: int
+end
+
+# ---- IRFn: a function as a contiguous op slice --------------------------------
+
+defstruct IRFn do
+  name      :: string
+  ret_tid   :: int
+  ops_start :: int
+  ops_len   :: int
+end
+
+# ---- IRProg: the complete program IR ------------------------------------------
+
+defstruct IRProg do
+  fns     :: []IRFn
+  ops     :: []IROp
+  args    :: []IRVal
+  structs :: []StructDef
+  fields  :: []FieldDef
+end
+
+# ---- LowerCtx: mutable lowering state (cursor-singleton pattern) --------------
+
+defstruct LowerCtx do
+  pool    :: []Node
+  ch      :: []int
+  types   :: []int
+  structs :: []StructDef
+  fields  :: []FieldDef
+  ops     :: []IROp
+  op_len  :: []int    # cursor[0] = current op count
+  args    :: []IRVal
+  arg_len :: []int    # cursor[0] = current arg count
+  tc      :: []int    # cursor[0] = next temporary index
+  vars    :: []VarElem
+  var_len :: []int    # cursor[0] = current declared-var count
+end

@@ -1,0 +1,6 @@
+# ---- IR lowering pass (parse tree → IRProg) ----------------------------------
+# Populated in subsequent tasks.
+
+defp make_lctx_stub() :: int do
+  return 0
+end
