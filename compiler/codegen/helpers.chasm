@@ -3,6 +3,34 @@
 # Walks the typed AST (with types[] filled by sema) and prints C99 to stdout.
 # Uses a VarElem side-table to track array element types per variable.
 
+# ---- Output section IDs -------------------------------------------------------
+# Sections are flushed in numeric order by flush_sections().
+
+@SEC_BUF_CAP = 65536   # max lines per section (guards against overflow)
+
+@SEC_PRE   = 0   # preamble: header comment, #include
+@SEC_TYPES = 1   # enum and struct typedefs
+@SEC_HELP  = 2   # typed array helpers
+@SEC_FWD   = 3   # function forward declarations
+@SEC_BODY  = 4   # function bodies, module attrs, chasm_main
+
+defstruct SectionBuf do
+  lines  :: []string
+  cursor :: []int
+end
+
+defp make_section_buf() :: SectionBuf do
+  lines  :: []string = []
+  cursor :: []int    = []
+  cursor.push(0)
+  empty  = ""
+  i = 0
+  while i < @SEC_BUF_CAP do
+    lines.push(empty)
+    i = i + 1
+  end
+  return SectionBuf{ lines: lines, cursor: cursor }
+end
 
 defstruct CCtx do
   pool    :: []Node
