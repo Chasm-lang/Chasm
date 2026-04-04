@@ -456,7 +456,7 @@ defp lower_stmt(lctx :: LowerCtx, idx :: int) do
       nm = lhs_nd.name
       tid_a = lctx.types.get(idx)
       if lctx_is_declared(lctx, nm) do
-        dst_a = IRVal{ tmp: nm, tid: tid_a, elem_tid: 0 }
+        dst_a = IRVal{ tmp: nm, tid: tid_a, elem_tid: lctx_elem_tid(lctx, nm) }
         lctx_emit(lctx, IROp{ op: :assign, dst: dst_a, a: val_v2, b: irval_void(),
           name: nm, ai: 0, ac: 0, line: node.line, col: node.col })
       else
