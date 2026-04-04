@@ -608,3 +608,76 @@ defp lower_block_body(lctx :: LowerCtx, block_idx :: int) do
     i12 = i12 + 1
   end
 end
+
+# ---- lower_fn: lower one function into IRFn + ops ----------------------------
+
+defp lower_fn(lctx :: LowerCtx, fn_idx :: int, fns_out :: []IRFn, fns_len :: []int) do
+  fn_nd :: Node = lctx.pool.get(fn_idx)
+  ops_start13 = lctx_op_count(lctx)
+
+  # Pre-declare parameters
+  params_start13 = fn_nd.a
+  params_count13 = fn_nd.b
+  pi13 = 0
+  while pi13 < params_count13 do
+    param_idx13 = lctx.ch.get(params_start13 + pi13)
+    param_nd13 :: Node = lctx.pool.get(param_idx13)
+    ann_nd13 :: Node = lctx.pool.get(param_nd13.a)
+    et13 = 0
+    an13 = ann_nd13.name
+    if str_len(an13) >= 2 do
+      if str_slice(an13, 0, 2) == "[]" do
+        et13 = elem_type_of_ann(an13, lctx.structs)
+      end
+    end
+    lctx_declare(lctx, param_nd13.name, et13)
+    pi13 = pi13 + 1
+  end
+
+  # Lower function body
+  lower_block_body(lctx, fn_nd.c)
+
+  ops_end13 = lctx_op_count(lctx)
+  ret_tid13 = fn_split_ret(fn_nd.name, lctx.structs)
+
+  fn_out :: IRFn = IRFn{ name: fn_nd.name, ret_tid: ret_tid13,
+    ops_start: ops_start13, ops_len: ops_end13 - ops_start13 }
+  n_fns = fns_len.get(0)
+  fns_out.set(n_fns, fn_out)
+  fns_len.set(0, n_fns + 1)
+
+  # Reset declared vars for next function
+  lctx.var_len.set(0, 0)
+end
+
+# ---- lower: entry point — walk root, lower all functions ---------------------
+
+defp lower(pool :: []Node, ch :: []int, root :: int,
+           types :: []int, structs :: []StructDef,
+           fields :: []FieldDef, fns :: []FnSig) :: IRProg do
+  lctx = make_lctx(pool, ch, types, structs, fields)
+
+  empty_fn :: IRFn = IRFn{ name: "", ret_tid: 0, ops_start: 0, ops_len: 0 }
+  fns_out :: []IRFn = []
+  i_fn = 0
+  while i_fn < 512 do fns_out.push(empty_fn) i_fn = i_fn + 1 end
+  fns_len :: []int = []
+  fns_len.push(0)
+
+  # Walk root node children
+  root_nd :: Node = pool.get(root)
+  cs14 = root_nd.a
+  cl14 = root_nd.b
+  i14  = 0
+  while i14 < cl14 do
+    child14 = ch.get(cs14 + i14)
+    cn14 :: Node = pool.get(child14)
+    if cn14.tag == :fn_decl or cn14.tag == :fn_def do
+      lower_fn(lctx, child14, fns_out, fns_len)
+    end
+    i14 = i14 + 1
+  end
+
+  return IRProg{ fns: fns_out, ops: lctx.ops, args: lctx.args,
+    structs: structs, fields: fields }
+end
