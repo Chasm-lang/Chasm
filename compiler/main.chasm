@@ -30,7 +30,12 @@ def main() do
     if target == "wasm" do
       wasm_codegen(pool, ch, root, types, structs, fields, fns)
     else
-      codegen(pool, ch, root, types, structs, fields, fns)
+      use_ir = file_read("/tmp/chasm_use_ir.txt")
+      if use_ir == "1" do
+        ir_codegen(pool, ch, root, types, structs, fields, fns)
+      else
+        codegen(pool, ch, root, types, structs, fields, fns)
+      end
     end
   end
 end
