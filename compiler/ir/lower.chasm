@@ -163,6 +163,43 @@ defp lower_expr(lctx :: LowerCtx, idx :: int) :: IRVal do
   end
 
   if tag == :binop do
+    nm = node.name
+    # Short-circuit: and/or must not eagerly evaluate rhs
+    if nm == "and" do
+      la  = lower_expr(lctx, node.a)
+      dst = lctx_tmp(lctx, @TID_BOOL)
+      lctx_emit(lctx, IROp{ op: :var_decl, dst: dst, a: irval_void(), b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      lctx_emit(lctx, IROp{ op: :assign, dst: dst, a: la, b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      lctx_emit(lctx, IROp{ op: :if_begin, dst: irval_void(), a: la, b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      ra = lower_expr(lctx, node.b)
+      lctx_emit(lctx, IROp{ op: :assign, dst: dst, a: ra, b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      lctx_emit(lctx, IROp{ op: :if_end, dst: irval_void(), a: irval_void(), b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      return dst
+    end
+    if nm == "or" do
+      la    = lower_expr(lctx, node.a)
+      dst   = lctx_tmp(lctx, @TID_BOOL)
+      lctx_emit(lctx, IROp{ op: :var_decl, dst: dst, a: irval_void(), b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      lctx_emit(lctx, IROp{ op: :assign, dst: dst, a: la, b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      neg_la = lctx_tmp(lctx, @TID_BOOL)
+      lctx_emit(lctx, IROp{ op: :unop, dst: neg_la, a: la, b: irval_void(),
+      name: "not", ai: 0, ac: 0, line: node.line, col: node.col })
+      lctx_emit(lctx, IROp{ op: :if_begin, dst: irval_void(), a: neg_la, b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      ra = lower_expr(lctx, node.b)
+      lctx_emit(lctx, IROp{ op: :assign, dst: dst, a: ra, b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      lctx_emit(lctx, IROp{ op: :if_end, dst: irval_void(), a: irval_void(), b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      return dst
+    end
     la  = lower_expr(lctx, node.a)
     ra  = lower_expr(lctx, node.b)
     dst = lctx_tmp(lctx, tid)
@@ -179,59 +216,89 @@ defp lower_expr(lctx :: LowerCtx, idx :: int) :: IRVal do
     return dst
   end
 
+  # --- Range: lo..hi → chasm_range(ctx, lo, hi) ---------------------------------
+  if tag == :range_expr do
+    lo_v = lower_expr(lctx, node.a)
+    hi_v = lower_expr(lctx, node.b)
+    as_r = lctx.arg_len.get(0)
+    lctx_push_arg(lctx, lo_v)
+    lctx_push_arg(lctx, hi_v)
+    dst = lctx_tmp_arr(lctx, @TID_INT)
+    lctx_emit(lctx, IROp{ op: :call, dst: dst, a: irval_void(), b: irval_void(),
+    name: "range", ai: as_r, ac: 2, line: node.line, col: node.col })
+    return dst
+  end
+
   if tag == :call do
-    args_start = lctx.arg_len.get(0)
-    ac2        = node.b
-    ai2        = 0
+    ac2 = node.b
+    avlist2 :: []IRVal = []
+    ai2 = 0
     while ai2 < ac2 do
       arg_node_idx = lctx.ch.get(node.a + ai2)
-      av = lower_expr(lctx, arg_node_idx)
-      lctx_push_arg(lctx, av)
+      avlist2.push(lower_expr(lctx, arg_node_idx))
       ai2 = ai2 + 1
     end
-    dst = lctx_tmp(lctx, tid)
+    args_start = lctx.arg_len.get(0)
+    ai2b = 0
+    while ai2b < ac2 do
+      lctx_push_arg(lctx, avlist2.get(ai2b))
+      ai2b = ai2b + 1
+    end
+    dst = irval_void()
+    if tid != @TID_VOID do dst = lctx_tmp(lctx, tid) end
     lctx_emit(lctx, IROp{ op: :call, dst: dst, a: irval_void(), b: irval_void(),
     name: node.name, ai: args_start, ac: ac2, line: node.line, col: node.col })
     return dst
   end
 
   if tag == :method_call do
-    recv_v     = lower_expr(lctx, node.a)
-    args_start3 = lctx.arg_len.get(0)
-    lctx_push_arg(lctx, recv_v)
-    ac3 = node.c
+    recv_v = lower_expr(lctx, node.a)
+    ac3    = node.c
+    avlist3 :: []IRVal = []
     ai3 = 0
     while ai3 < ac3 do
       arg_node_idx3 = lctx.ch.get(node.b + ai3)
-      av3 = lower_expr(lctx, arg_node_idx3)
-      lctx_push_arg(lctx, av3)
+      avlist3.push(lower_expr(lctx, arg_node_idx3))
       ai3 = ai3 + 1
     end
+    args_start3 = lctx.arg_len.get(0)
+    lctx_push_arg(lctx, recv_v)
+    ai3b = 0
+    while ai3b < ac3 do
+      lctx_push_arg(lctx, avlist3.get(ai3b))
+      ai3b = ai3b + 1
+    end
     total_ac3 = ac3 + 1
-    dst3 = lctx_tmp(lctx, tid)
+    dst3 = irval_void()
+    if tid != @TID_VOID do dst3 = lctx_tmp(lctx, tid) end
     lctx_emit(lctx, IROp{ op: :method_call, dst: dst3, a: recv_v, b: irval_void(),
     name: node.name, ai: args_start3, ac: total_ac3, line: node.line, col: node.col })
     return dst3
   end
 
   if tag == :pipe_expr do
-    pipe_val    = lower_expr(lctx, node.a)
-    call_node :: Node = lctx.pool.get(node.b)
-    args_start4 = lctx.arg_len.get(0)
-    lctx_push_arg(lctx, pipe_val)
-    ac4 = call_node.b
+    pipe_val   = lower_expr(lctx, node.a)
+    call_node4 :: Node = lctx.pool.get(node.b)
+    ac4        = call_node4.b
+    avlist4 :: []IRVal = []
     ai4 = 0
     while ai4 < ac4 do
-      arg_node_idx4 = lctx.ch.get(call_node.a + ai4)
-      av4 = lower_expr(lctx, arg_node_idx4)
-      lctx_push_arg(lctx, av4)
+      arg_node_idx4 = lctx.ch.get(call_node4.a + ai4)
+      avlist4.push(lower_expr(lctx, arg_node_idx4))
       ai4 = ai4 + 1
+    end
+    args_start4 = lctx.arg_len.get(0)
+    lctx_push_arg(lctx, pipe_val)
+    ai4b = 0
+    while ai4b < ac4 do
+      lctx_push_arg(lctx, avlist4.get(ai4b))
+      ai4b = ai4b + 1
     end
     total_ac4 = ac4 + 1
     call_tid4  = lctx.types.get(node.b)
     dst4 = lctx_tmp(lctx, call_tid4)
     lctx_emit(lctx, IROp{ op: :call, dst: dst4, a: irval_void(), b: irval_void(),
-    name: call_node.name, ai: args_start4, ac: total_ac4, line: node.line, col: node.col })
+    name: call_node4.name, ai: args_start4, ac: total_ac4, line: node.line, col: node.col })
     return dst4
   end
 
@@ -244,13 +311,20 @@ defp lower_expr(lctx :: LowerCtx, idx :: int) :: IRVal do
         lctx_push_arg(lctx, obj_v5)
         dst5 = lctx_tmp(lctx, @TID_INT)
         lctx_emit(lctx, IROp{ op: :call, dst: dst5, a: irval_void(), b: irval_void(),
-          name: "chasm_str_len", ai: as5, ac: 1, line: node.line, col: node.col })
+        name: "chasm_str_len", ai: as5, ac: 1, line: node.line, col: node.col })
         return dst5
       end
     end
-    dst5b = lctx_tmp(lctx, tid)
+    n5b = lctx.tc.get(0)
+    lctx.tc.set(0, n5b + 1)
+    tname5b = str_concat("t", int_to_str(n5b))
+    et5b = 0
+    if tid == @TID_ARRAY do
+      et5b = field_elem_lookup(lctx.fields, obj_v5.tid, node.name)
+    end
+    dst5b = IRVal{ tmp: tname5b, tid: tid, elem_tid: et5b }
     lctx_emit(lctx, IROp{ op: :field_get, dst: dst5b, a: obj_v5, b: irval_void(),
-      name: node.name, ai: 0, ac: 0, line: node.line, col: node.col })
+    name: node.name, ai: 0, ac: 0, line: node.line, col: node.col })
     return dst5b
   end
 
@@ -259,14 +333,14 @@ defp lower_expr(lctx :: LowerCtx, idx :: int) :: IRVal do
     idx_v6  = lower_expr(lctx, node.b)
     dst6    = lctx_tmp(lctx, tid)
     lctx_emit(lctx, IROp{ op: :index_get, dst: dst6, a: obj_v6, b: idx_v6,
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     return dst6
   end
 
   if tag == :struct_lit do
-    struct_tid7 = tid
+    struct_tid7     = tid
     supplied_count7 = node.b
-    as7 = lctx.arg_len.get(0)
+    fvals7 :: []IRVal = []
     fdi7 = 0
     while fdi7 < lctx.fields.len do
       fd7 :: FieldDef = lctx.fields.get(fdi7)
@@ -277,48 +351,57 @@ defp lower_expr(lctx :: LowerCtx, idx :: int) :: IRVal do
           child_idx7 = lctx.ch.get(node.a + si7)
           child7 :: Node = lctx.pool.get(child_idx7)
           if child7.name == fd7.name do
-            fv7 = lower_expr(lctx, child7.a)
-            lctx_push_arg(lctx, fv7)
+            fvals7.push(lower_expr(lctx, child7.a))
             found7 = true
           end
           si7 = si7 + 1
         end
         if found7 == false do
           if fd7.default_node_idx >= 0 do
-            dv7 = lower_expr(lctx, fd7.default_node_idx)
-            lctx_push_arg(lctx, dv7)
+            fvals7.push(lower_expr(lctx, fd7.default_node_idx))
           else
-            lctx_push_arg(lctx, IRVal{ tmp: "0", tid: fd7.type_id, elem_tid: 0 })
+            fvals7.push(IRVal{ tmp: "0", tid: fd7.type_id, elem_tid: 0 })
           end
         end
       end
       fdi7 = fdi7 + 1
     end
-    total7 = lctx.arg_len.get(0) - as7
+    as7 = lctx.arg_len.get(0)
+    ffi7 = 0
+    while ffi7 < fvals7.len do
+      lctx_push_arg(lctx, fvals7.get(ffi7))
+      ffi7 = ffi7 + 1
+    end
     dst7 = lctx_tmp(lctx, struct_tid7)
     lctx_emit(lctx, IROp{ op: :struct_new, dst: dst7, a: irval_void(), b: irval_void(),
-      name: "", ai: as7, ac: total7, line: node.line, col: node.col })
+    name: "", ai: as7, ac: fvals7.len, line: node.line, col: node.col })
     return dst7
   end
 
   if tag == :struct_update do
     base_v8 = lower_expr(lctx, node.a)
-    as8     = lctx.arg_len.get(0)
-    lctx_push_arg(lctx, base_v8)
+    uvals8 :: []IRVal = []
+    unames8 :: []string = []
     ui8 = 0
     while ui8 < node.c do
       child_idx8 = lctx.ch.get(node.b + ui8)
       child8 :: Node = lctx.pool.get(child_idx8)
-      uv8 = lower_expr(lctx, child8.a)
-      name_val8 = IRVal{ tmp: child8.name, tid: 0, elem_tid: 0 }
-      lctx_push_arg(lctx, name_val8)
-      lctx_push_arg(lctx, uv8)
+      uvals8.push(lower_expr(lctx, child8.a))
+      unames8.push(child8.name)
       ui8 = ui8 + 1
+    end
+    as8 = lctx.arg_len.get(0)
+    lctx_push_arg(lctx, base_v8)
+    ui8b = 0
+    while ui8b < uvals8.len do
+      lctx_push_arg(lctx, IRVal{ tmp: unames8.get(ui8b), tid: 0, elem_tid: 0 })
+      lctx_push_arg(lctx, uvals8.get(ui8b))
+      ui8b = ui8b + 1
     end
     total8 = lctx.arg_len.get(0) - as8
     dst8 = lctx_tmp(lctx, tid)
     lctx_emit(lctx, IROp{ op: :struct_update, dst: dst8, a: base_v8, b: irval_void(),
-      name: "", ai: as8, ac: total8, line: node.line, col: node.col })
+    name: "", ai: as8, ac: total8, line: node.line, col: node.col })
     return dst8
   end
 
@@ -335,47 +418,91 @@ defp lower_expr(lctx :: LowerCtx, idx :: int) :: IRVal do
     lctx_push_arg(lctx, inner_v9)
     dst9 = lctx_tmp(lctx, @TID_STRING)
     lctx_emit(lctx, IROp{ op: :call, dst: dst9, a: irval_void(), b: irval_void(),
-      name: conv_fn9, ai: as9, ac: 1, line: node.line, col: node.col })
+    name: conv_fn9, ai: as9, ac: 1, line: node.line, col: node.col })
     return dst9
   end
 
   if tag == :if_stmt do
     cond_v10 = lower_expr(lctx, node.a)
     dst10    = lctx_tmp(lctx, tid)
+    # Declare result temp so hoist pass can lift it to function scope
+    lctx_emit(lctx, IROp{ op: :var_decl, dst: dst10, a: irval_void(), b: irval_void(),
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     lctx_emit(lctx, IROp{ op: :if_begin, dst: irval_void(), a: cond_v10, b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     then_v10 = lower_expr(lctx, node.b)
     lctx_emit(lctx, IROp{ op: :assign, dst: dst10, a: then_v10, b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     lctx_emit(lctx, IROp{ op: :if_else, dst: irval_void(), a: irval_void(), b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     else_v10 = lower_expr(lctx, node.c)
     lctx_emit(lctx, IROp{ op: :assign, dst: dst10, a: else_v10, b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     lctx_emit(lctx, IROp{ op: :if_end, dst: irval_void(), a: irval_void(), b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     return dst10
   end
 
   if tag == :match_expr do
+    # match_arm node: .name = pattern string, .a = body expr index, .b = binding idx
     subj_v11   = lower_expr(lctx, node.a)
+    subj_tid11 = subj_v11.tid
     dst11      = lctx_tmp(lctx, tid)
+    # Declare result temp so hoist pass can lift it to function scope
+    lctx_emit(lctx, IROp{ op: :var_decl, dst: dst11, a: irval_void(), b: irval_void(),
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    # Use if-else chain so non-matching arms don't execute their body assignment.
+    # Each non-wildcard arm emits if_begin...assign...if_else (not if_end);
+    # the wildcard arm's body lands in the innermost else branch.
+    # We track how many open else-blocks need closing afterward.
+    match_depth11 = 0
     ci11 = 0
     while ci11 < node.c do
       case_idx11 = lctx.ch.get(node.b + ci11)
       case_nd11 :: Node = lctx.pool.get(case_idx11)
-      pat_v11  = lower_expr(lctx, case_nd11.a)
-      eq_v11   = lctx_tmp(lctx, @TID_BOOL)
-      lctx_emit(lctx, IROp{ op: :binop, dst: eq_v11, a: subj_v11, b: pat_v11,
+      pat11 = case_nd11.name
+      body_v11 = lower_expr(lctx, case_nd11.a)
+      if pat11 == "_" do
+        # Wildcard: assignment inside the current innermost else branch
+        lctx_emit(lctx, IROp{ op: :assign, dst: dst11, a: body_v11, b: irval_void(),
+        name: "", ai: 0, ac: 0, line: case_nd11.line, col: case_nd11.col })
+      else
+        # Determine pattern literal type from subject type and pattern syntax
+        pat_v11 :: IRVal = irval_void()
+        first_char11 = str_char_at(pat11, 0)
+        if first_char11 == 58 do
+          # Atom literal: :foo
+          inner11 = str_slice(pat11, 1, str_len(pat11))
+          ptmp11 = lctx_tmp(lctx, @TID_ATOM)
+          lctx_emit(lctx, IROp{ op: :lit_atom, dst: ptmp11, a: irval_void(), b: irval_void(),
+          name: inner11, ai: 0, ac: 0, line: case_nd11.line, col: case_nd11.col })
+          pat_v11 = ptmp11
+        else
+          # Numeric literal (int or enum variant treated as int)
+          ptmp11 = lctx_tmp(lctx, @TID_INT)
+          lctx_emit(lctx, IROp{ op: :lit_int, dst: ptmp11, a: irval_void(), b: irval_void(),
+          name: pat11, ai: 0, ac: 0, line: case_nd11.line, col: case_nd11.col })
+          pat_v11 = ptmp11
+        end
+        eq_v11 = lctx_tmp(lctx, @TID_BOOL)
+        lctx_emit(lctx, IROp{ op: :binop, dst: eq_v11, a: subj_v11, b: pat_v11,
         name: "==", ai: 0, ac: 0, line: case_nd11.line, col: case_nd11.col })
-      lctx_emit(lctx, IROp{ op: :if_begin, dst: irval_void(), a: eq_v11, b: irval_void(),
+        lctx_emit(lctx, IROp{ op: :if_begin, dst: irval_void(), a: eq_v11, b: irval_void(),
         name: "", ai: 0, ac: 0, line: case_nd11.line, col: case_nd11.col })
-      body_v11 = lower_expr(lctx, case_nd11.b)
-      lctx_emit(lctx, IROp{ op: :assign, dst: dst11, a: body_v11, b: irval_void(),
+        lctx_emit(lctx, IROp{ op: :assign, dst: dst11, a: body_v11, b: irval_void(),
         name: "", ai: 0, ac: 0, line: case_nd11.line, col: case_nd11.col })
-      lctx_emit(lctx, IROp{ op: :if_end, dst: irval_void(), a: irval_void(), b: irval_void(),
+        lctx_emit(lctx, IROp{ op: :if_else, dst: irval_void(), a: irval_void(), b: irval_void(),
         name: "", ai: 0, ac: 0, line: case_nd11.line, col: case_nd11.col })
+        match_depth11 = match_depth11 + 1
+      end
       ci11 = ci11 + 1
+    end
+    # Close all opened if-else blocks
+    close11 = 0
+    while close11 < match_depth11 do
+      lctx_emit(lctx, IROp{ op: :if_end, dst: irval_void(), a: irval_void(), b: irval_void(),
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      close11 = close11 + 1
     end
     return dst11
   end
@@ -390,7 +517,7 @@ defp lower_expr(lctx :: LowerCtx, idx :: int) :: IRVal do
     end
     dst12 = lctx_tmp(lctx, tid)
     lctx_emit(lctx, IROp{ op: :tuple_new, dst: dst12, a: irval_void(), b: irval_void(),
-      name: "", ai: as12, ac: node.b, line: node.line, col: node.col })
+    name: "", ai: as12, ac: node.b, line: node.line, col: node.col })
     return dst12
   end
 
@@ -419,10 +546,15 @@ defp lower_stmt(lctx :: LowerCtx, idx :: int) do
         end
       end
     end
-    lctx_declare(lctx, node.name, et_v)
     dst_v = IRVal{ tmp: node.name, tid: tid_v, elem_tid: et_v }
-    lctx_emit(lctx, IROp{ op: :var_decl, dst: dst_v, a: val_v, b: irval_void(),
+    if lctx_is_declared(lctx, node.name) do
+      lctx_emit(lctx, IROp{ op: :assign, dst: dst_v, a: val_v, b: irval_void(),
       name: node.name, ai: 0, ac: 0, line: node.line, col: node.col })
+    else
+      lctx_declare(lctx, node.name, et_v)
+      lctx_emit(lctx, IROp{ op: :var_decl, dst: dst_v, a: val_v, b: irval_void(),
+      name: node.name, ai: 0, ac: 0, line: node.line, col: node.col })
+    end
     return
   end
 
@@ -436,12 +568,12 @@ defp lower_stmt(lctx :: LowerCtx, idx :: int) do
       if lctx_is_declared(lctx, nm) do
         dst_a = IRVal{ tmp: nm, tid: tid_a, elem_tid: lctx_elem_tid(lctx, nm) }
         lctx_emit(lctx, IROp{ op: :assign, dst: dst_a, a: val_v2, b: irval_void(),
-          name: nm, ai: 0, ac: 0, line: node.line, col: node.col })
+        name: nm, ai: 0, ac: 0, line: node.line, col: node.col })
       else
         lctx_declare(lctx, nm, 0)
         dst_a = IRVal{ tmp: nm, tid: tid_a, elem_tid: 0 }
         lctx_emit(lctx, IROp{ op: :var_decl, dst: dst_a, a: val_v2, b: irval_void(),
-          name: nm, ai: 0, ac: 0, line: node.line, col: node.col })
+        name: nm, ai: 0, ac: 0, line: node.line, col: node.col })
       end
     end
     return
@@ -452,7 +584,7 @@ defp lower_stmt(lctx :: LowerCtx, idx :: int) do
     attr_bare2 = str_slice(node.name, 1, str_len(node.name))
     val_v3 = lower_expr(lctx, node.b)
     lctx_emit(lctx, IROp{ op: :at_write, dst: irval_void(), a: val_v3, b: irval_void(),
-      name: attr_bare2, ai: 0, ac: 0, line: node.line, col: node.col })
+    name: attr_bare2, ai: 0, ac: 0, line: node.line, col: node.col })
     return
   end
 
@@ -460,11 +592,11 @@ defp lower_stmt(lctx :: LowerCtx, idx :: int) do
   if tag == :return_stmt do
     if node.a < 0 do
       lctx_emit(lctx, IROp{ op: :return, dst: irval_void(), a: irval_void(), b: irval_void(),
-        name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     else
       ret_v = lower_expr(lctx, node.a)
       lctx_emit(lctx, IROp{ op: :return, dst: irval_void(), a: ret_v, b: irval_void(),
-        name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     end
     return
   end
@@ -472,12 +604,12 @@ defp lower_stmt(lctx :: LowerCtx, idx :: int) do
   # --- break / continue --------------------------------------------------------
   if tag == :break_stmt do
     lctx_emit(lctx, IROp{ op: :break, dst: irval_void(), a: irval_void(), b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     return
   end
   if tag == :continue_stmt do
     lctx_emit(lctx, IROp{ op: :continue, dst: irval_void(), a: irval_void(), b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     return
   end
 
@@ -499,17 +631,17 @@ defp lower_stmt(lctx :: LowerCtx, idx :: int) do
         if str_len(vname11) > 0 do
           get_v = lctx_tmp(lctx, @TID_INT)
           lctx_emit(lctx, IROp{ op: :tuple_get, dst: get_v, a: rhs_v,
-            b: IRVal{ tmp: int_to_str(vi11), tid: @TID_INT, elem_tid: 0 },
-            name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+          b: IRVal{ tmp: int_to_str(vi11), tid: @TID_INT, elem_tid: 0 },
+          name: "", ai: 0, ac: 0, line: node.line, col: node.col })
           if lctx_is_declared(lctx, vname11) do
             dst11 = IRVal{ tmp: vname11, tid: @TID_INT, elem_tid: 0 }
             lctx_emit(lctx, IROp{ op: :assign, dst: dst11, a: get_v, b: irval_void(),
-              name: vname11, ai: 0, ac: 0, line: node.line, col: node.col })
+            name: vname11, ai: 0, ac: 0, line: node.line, col: node.col })
           else
             lctx_declare(lctx, vname11, 0)
             dst11 = IRVal{ tmp: vname11, tid: @TID_INT, elem_tid: 0 }
             lctx_emit(lctx, IROp{ op: :var_decl, dst: dst11, a: get_v, b: irval_void(),
-              name: vname11, ai: 0, ac: 0, line: node.line, col: node.col })
+            name: vname11, ai: 0, ac: 0, line: node.line, col: node.col })
           end
           vi11 = vi11 + 1
         end
@@ -524,28 +656,28 @@ defp lower_stmt(lctx :: LowerCtx, idx :: int) do
   if tag == :if_stmt do
     cond_v2 = lower_expr(lctx, node.a)
     lctx_emit(lctx, IROp{ op: :if_begin, dst: irval_void(), a: cond_v2, b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     lower_block_body(lctx, node.b)
     if node.c >= 0 do
       lctx_emit(lctx, IROp{ op: :if_else, dst: irval_void(), a: irval_void(), b: irval_void(),
-        name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
       lower_block_body(lctx, node.c)
     end
     lctx_emit(lctx, IROp{ op: :if_end, dst: irval_void(), a: irval_void(), b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     return
   end
 
   # --- while statement ---------------------------------------------------------
   if tag == :while_stmt do
     lctx_emit(lctx, IROp{ op: :while_begin, dst: irval_void(), a: irval_void(), b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     cond_v3 = lower_expr(lctx, node.a)
     lctx_emit(lctx, IROp{ op: :while_cond, dst: irval_void(), a: cond_v3, b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     lower_block_body(lctx, node.b)
     lctx_emit(lctx, IROp{ op: :while_end, dst: irval_void(), a: irval_void(), b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     return
   end
 
@@ -553,11 +685,11 @@ defp lower_stmt(lctx :: LowerCtx, idx :: int) do
   if tag == :for_stmt do
     iter_v = lower_expr(lctx, node.a)
     lctx_emit(lctx, IROp{ op: :for_begin, dst: irval_void(), a: iter_v, b: irval_void(),
-      name: node.name, ai: 0, ac: 0, line: node.line, col: node.col })
+    name: node.name, ai: 0, ac: 0, line: node.line, col: node.col })
     lctx_declare(lctx, node.name, iter_v.elem_tid)
     lower_block_body(lctx, node.b)
     lctx_emit(lctx, IROp{ op: :for_end, dst: irval_void(), a: irval_void(), b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
     return
   end
 
@@ -565,16 +697,16 @@ defp lower_stmt(lctx :: LowerCtx, idx :: int) do
   val_v4 = lower_expr(lctx, idx)
   if str_len(val_v4.tmp) > 0 do
     lctx_emit(lctx, IROp{ op: :discard, dst: irval_void(), a: val_v4, b: irval_void(),
-      name: "", ai: 0, ac: 0, line: node.line, col: node.col })
+    name: "", ai: 0, ac: 0, line: node.line, col: node.col })
   end
 end
 
 defp is_stmt_tag(tag :: atom) :: bool do
   return tag == :var_decl or tag == :assign or tag == :return_stmt or
-    tag == :if_stmt or tag == :while_stmt or tag == :for_stmt or
-    tag == :break_stmt or tag == :continue_stmt or
-    tag == :call or tag == :method_call or tag == :at_assign or
-    tag == :tuple_dest
+  tag == :if_stmt or tag == :while_stmt or tag == :for_stmt or
+  tag == :break_stmt or tag == :continue_stmt or
+  tag == :call or tag == :method_call or tag == :at_assign or
+  tag == :tuple_dest
 end
 
 # ---- lower_block_body: walk a block node and lower each statement ------------
@@ -627,7 +759,7 @@ defp lower_fn(lctx :: LowerCtx, fn_idx :: int, fns_out :: []IRFn, fns_len :: []i
   ret_tid13 = fn_split_ret(fn_nd.name, lctx.structs)
 
   fn_out :: IRFn = IRFn{ name: fn_nd.name, ret_tid: ret_tid13,
-    ops_start: ops_start13, ops_len: ops_end13 - ops_start13 }
+  ops_start: ops_start13, ops_len: ops_end13 - ops_start13 }
   n_fns = fns_len.get(0)
   fns_out.set(n_fns, fn_out)
   fns_len.set(0, n_fns + 1)
@@ -639,8 +771,8 @@ end
 # ---- lower: entry point — walk root, lower all functions ---------------------
 
 defp lower(pool :: []Node, ch :: []int, root :: int,
-           types :: []int, structs :: []StructDef,
-           fields :: []FieldDef, fns :: []FnSig) :: IRProg do
+types :: []int, structs :: []StructDef,
+fields :: []FieldDef, fns :: []FnSig) :: IRProg do
   lctx = make_lctx(pool, ch, types, structs, fields)
 
   empty_fn :: IRFn = IRFn{ name: "", ret_tid: 0, ops_start: 0, ops_len: 0 }
@@ -664,6 +796,27 @@ defp lower(pool :: []Node, ch :: []int, root :: int,
     i14 = i14 + 1
   end
 
+  # Lower top-level statements into a synthetic "__toplevel__" IRFn
+  # Top-level script statements are wrapped by the parser in :toplevel_stmt nodes;
+  # unwrap them to get to the actual statement inside (node.a).
+  ops_start_tl = lctx_op_count(lctx)
+  i_tl = 0
+  while i_tl < cl14 do
+    child_tl = ch.get(cs14 + i_tl)
+    cn_tl :: Node = pool.get(child_tl)
+    if cn_tl.tag == :toplevel_stmt do
+      inner_tl = cn_tl.a
+      lower_stmt(lctx, inner_tl)
+    end
+    i_tl = i_tl + 1
+  end
+  ops_end_tl = lctx_op_count(lctx)
+  tl_ops_len = ops_end_tl - ops_start_tl
+  n14_tl = fns_len.get(0)
+  fns_out.set(n14_tl, IRFn{ name: "__toplevel__", ret_tid: 0,
+  ops_start: ops_start_tl, ops_len: tl_ops_len })
+  fns_len.set(0, n14_tl + 1)
+
   return IRProg{ fns: fns_out, ops: lctx.ops, args: lctx.args,
-    structs: structs, fields: fields }
+  structs: structs, fields: fields }
 end
