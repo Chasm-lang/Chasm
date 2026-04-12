@@ -287,6 +287,22 @@ static inline const char* chasm_array_get_s (ChasmCtx *ctx, ChasmArray *a, int64
 static inline void        chasm_array_set_s (ChasmCtx *ctx, ChasmArray *a, int64_t i, const char *v){ (void)ctx; if(i>=0&&i<a->len)((const char**)a->data)[i]=v; }
 static inline const char* chasm_array_pop_s (ChasmCtx *ctx, ChasmArray *a)               { (void)ctx; return a->len>0?((const char**)a->data)[--a->len]:""; }
 
+/* ---- primitive fixed arrays — arena-backed, pre-filled ----------- */
+static inline ChasmArray chasm_array_fixed_new_int(ChasmArena *arena, int64_t cap, int64_t def) {
+    if (cap <= 0) cap = 8;
+    void *d = chasm_alloc(arena, (size_t)cap * sizeof(int64_t), _Alignof(int64_t));
+    if (!d) return (ChasmArray){NULL, 0, cap, 8};
+    int64_t *p = (int64_t*)d; for (int64_t _i = 0; _i < cap; _i++) p[_i] = def;
+    return (ChasmArray){d, cap, cap, 8};
+}
+static inline ChasmArray chasm_array_fixed_new_float(ChasmArena *arena, int64_t cap, double def) {
+    if (cap <= 0) cap = 8;
+    void *d = chasm_alloc(arena, (size_t)cap * sizeof(double), _Alignof(double));
+    if (!d) return (ChasmArray){NULL, 0, cap, (int64_t)sizeof(double)};
+    double *p = (double*)d; for (int64_t _i = 0; _i < cap; _i++) p[_i] = def;
+    return (ChasmArray){d, cap, cap, (int64_t)sizeof(double)};
+}
+
 /* ---- typed (struct) array — arena-backed, fixed capacity ---------- */
 static inline ChasmArray chasm_array_new_typed(ChasmCtx *ctx, int64_t cap, int64_t elem_size) {
     if (cap <= 0 || elem_size <= 0) return (ChasmArray){NULL, 0, 0, elem_size};
