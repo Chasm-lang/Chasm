@@ -38,11 +38,13 @@ Every value has a **lifetime** — a region of memory that determines how long i
 Frame  <  Script  <  Persistent
 ```
 
-| Lifetime | Cleared when | Annotated as |
+| Lifetime | Cleared when | When to annotate |
 |---|---|---|
-| `frame` | Every tick (every call to your update function) | `:: frame` |
-| `script` | On hot-reload, or when you explicitly reset | `:: script` |
-| `persistent` | Never (until the process exits) | `:: persistent` |
+| `frame` | Every tick | Write `:: frame` on `@attr` arrays that should auto-clear each tick |
+| `script` | On hot-reload | **Default** — never required, omit the annotation |
+| `persistent` | Never (process exit) | Write `:: persistent` on `@attr`s that must survive hot-reload |
+
+**The only annotations you ever need to write are `:: frame` and `:: persistent`.** Script is the default for all `@attr` declarations. Local variables inside functions never need a lifetime annotation — the compiler infers it from the right-hand side.
 
 Values can only flow **upward** — from shorter to longer lifetimes. Assigning a `frame`-lifetime value to a `script` variable is a compile error unless you use an explicit promotion function.
 
@@ -69,7 +71,7 @@ The compiler infers the lifetime of every expression:
 **Literals are persistent.** Mixing a `@script` attr with a literal (e.g. `@count * 2`) infers persistent because `max(script, persistent) = persistent`. E008 is most commonly triggered by assigning a `@script` attr directly to a `@persistent` one:
 
 ```chasm
-@score      :: script     = 0
+@score                 = 0   # script (default)
 @high_score :: persistent = 0
 
 def update() do
@@ -178,18 +180,20 @@ Module attributes (`@name`) are module-level variables declared at file scope. T
 #### Declaration syntax
 
 ```
-@name :: lifetime = expr
+@name = expr                  # script lifetime (default)
+@name :: persistent = expr    # persistent lifetime
+@name :: frame      = expr    # frame lifetime
 ```
 
 - `@name` — the attribute name. The leading `@` is part of the name everywhere it appears.
-- `:: lifetime` — one of `frame`, `script`, or `persistent`.
+- `:: lifetime` — optional. Omit for script (the default). Write `:: persistent` or `:: frame` only when you need a non-default lifetime.
 - `= expr` — initializer evaluated at module init time.
 
 ```chasm
-@score      :: script     = 0
-@high_score :: persistent = 0
-@speed      :: script     = 400.0
-@bg_color   :: script     = 0x181820ff
+@score                 = 0          # script — resets on hot-reload
+@speed                 = 400.0      # script — resets on hot-reload
+@high_score :: persistent = 0       # survives hot-reload
+@scratch    :: frame      = array_fixed(64, 0)  # cleared each tick
 ```
 
 #### Reading an attribute
@@ -220,33 +224,33 @@ Attribute assignment is a statement, not an expression. It cannot appear on the 
 
 #### Lifetime rules
 
-`@attr` lifetimes follow the same hierarchy as local variables:
-
-| Lifetime | Lives until |
-|---|---|
-| `:: frame` | End of the current tick (reset by the engine before each call) |
-| `:: script` | Hot-reload or explicit reset |
-| `:: persistent` | Process exit |
-
-An `@frame` attribute is re-initialized on every tick. An `@script` attribute survives across ticks but is reset on hot-reload. An `@persistent` attribute is never reset.
+| Annotation | Lives until | Required? |
+|---|---|---|
+| *(none)* | Hot-reload (script) | Default — omit it |
+| `:: frame` | End of the current tick | Write it when you want auto-clear |
+| `:: persistent` | Process exit | Write it when you need to survive reload |
 
 You cannot assign a shorter-lived value to a longer-lived attribute without explicit promotion:
 
 ```chasm
-@saved :: persistent = persist_copy(computed_value)
+@score                 = 0   # script
+@best  :: persistent   = 0
+
+def on_hit() do
+  @best = persist_copy(@score)   # required: script → persistent
+end
 ```
 
 #### Common patterns
 
 ```chasm
-# Counter that survives frames
-@ticks :: script = 0
+# Active game state — no annotation needed (script is the default)
+@ticks     = 0
+@score     = 0
+@player_x  = 400.0
+@positions = array_fixed(8, 0.0)
 
-def on_tick(dt :: float) do
-  @ticks = @ticks + 1
-end
-
-# High score that survives reload
+# High score — must survive hot-reload, so :: persistent is required
 @best :: persistent = 0
 
 def record(score :: int) do
@@ -255,16 +259,16 @@ def record(score :: int) do
   end
 end
 
-# Preloaded resource handle
-@font :: script = 0
+# Asset handle — must survive hot-reload, so :: persistent is required
+# on_init runs once per process start; reloading the script does not re-run it
+@font :: persistent = 0
 
-def init() do
+def on_init() do
   @font = load_font("assets/mono.ttf")
 end
 
-# Fixed-capacity arena-backed array (no heap, lifetime-safe)
-# Float array — all slots pre-filled, no push loop needed
-@positions :: script = array_fixed(8, 0.0)
+# Scratch array — rebuilt every tick, so :: frame gives free auto-clear
+@visible :: frame = array_fixed(128, 0)
 
 def on_tick(dt :: float) do
   @positions.set(0, @player_x)   # direct float — no to_int/to_float casting
@@ -365,9 +369,8 @@ x = 42                  # persistent (integer literal)
 y = copy_to_script(x)   # script (copy_to_script result)
 z = persist_copy(x)     # persistent (persist_copy result)
 
-# Explicit annotations are accepted but not required
+# Explicit annotations are accepted but rarely needed
 a :: frame      = compute()   # forced frame lifetime
-b :: script     = 0.0         # forced script lifetime
 c :: persistent = 0           # forced persistent lifetime
 ```
 
@@ -486,7 +489,7 @@ Use `array_new(Type, cap)` for local struct collections where the maximum size i
 For module attributes (`@name`). Allocates from the arena that matches the attribute's declared lifetime. The capacity is fixed at declaration time; pushing beyond it aborts with an error.
 
 ```chasm
-@bullets :: script     = array_fixed(8)       # int array, seeded via push
+@bullets  = array_fixed(8)       # int array, seeded via push
 @sparks  :: frame      = array_fixed(32)      # wiped every tick — zero per-element cost
 @records :: persistent = array_fixed(4)       # never reset
 ```
@@ -494,9 +497,9 @@ For module attributes (`@name`). Allocates from the arena that matches the attri
 **Typed arrays with a default value** — pass a second argument to `array_fixed` to declare the element type and pre-fill all slots at init time. The type is inferred from the default literal: an integer default gives `[]int`, a float default gives `[]float`, and a struct literal default gives `[]StructName`.
 
 ```chasm
-@bullet_x :: script = array_fixed(4, 0.0)   # []float, all slots initialised to 0.0
-@bullet_y :: script = array_fixed(4, 0.0)   # []float
-@active   :: script = array_fixed(4, 0)     # []int,   all slots initialised to 0
+@bullet_x  = array_fixed(4, 0.0)   # []float, all slots initialised to 0.0
+@bullet_y  = array_fixed(4, 0.0)   # []float
+@active  = array_fixed(4, 0)     # []int,   all slots initialised to 0
 ```
 
 With a default, `on_init` needs no push loop — all slots are ready immediately. `get`/`set` on a float array return and accept `float` directly, with no `to_float`/`to_int` casting required.
@@ -512,7 +515,7 @@ defstruct Bullet do
   active :: int
 end
 
-@bullets :: script = array_fixed(8, Bullet{ x: 0.0, y: 0.0, vel_x: 0.0, vel_y: 0.0, active: 0 })
+@bullets  = array_fixed(8, Bullet{ x: 0.0, y: 0.0, vel_x: 0.0, vel_y: 0.0, active: 0 })
 
 def on_tick(dt :: float) do
   b :: frame = @bullets.get(0)        # returns Bullet by value
@@ -542,7 +545,7 @@ Use `array_fixed` for any module-level array where the maximum size is known upf
 The compiler enforces the same lifetime rules for arrays as for scalars. Assigning a `frame`-lifetime value to a `script` array attribute is a compile error:
 
 ```chasm
-@positions :: script = array_fixed(8)
+@positions  = array_fixed(8)
 
 def on_tick(dt :: float) do
   local_val :: frame = compute()

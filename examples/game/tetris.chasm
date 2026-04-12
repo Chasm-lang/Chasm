@@ -300,7 +300,7 @@ end
 def on_init() do
   init_audio()
   set_title("Tetris")
-  set_fps(60)
+  set_fps(200)
   set_window_size(800, 720)
 
   @tex_bg     = load_texture("Tetris/background/background.png")
