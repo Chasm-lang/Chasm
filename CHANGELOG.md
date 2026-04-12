@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.9.9] — 2026-04-12 — Exact lifetime inference for local variables
+
+### Summary
+
+The compiler now infers the lifetime (`frame` / `script` / `persistent`) of local variables from their right-hand side expression, eliminating the need for explicit lifetime annotations on locals. A variable assigned from `persist_copy(x)` automatically gets persistent lifetime; one assigned from `copy_to_script(x)` gets script lifetime; integer, float, bool, atom, and string literals are persistent. Lifetime propagates through chains of assignments. The E008 "lifetime violation" check is now precise rather than heuristic.
+
+### Changes
+
+- **feat(sema)**: `expr_lifetime` in `sema/resolve.chasm` now accepts `syms`/`sym_len` and looks up each `:ident`'s declared lifetime in the symbol table instead of returning a hard-coded heuristic of `2` (script)
+- **feat(sema)**: `sema_stmt` for `:var_decl` infers lifetime from the RHS expression when no explicit `:: frame / :: script / :: persistent` annotation is present
+- **feat(sema)**: `sema_stmt` for `:assign` uses the inferred RHS lifetime when introducing a new variable into the symbol table
+- **fix(sema)**: E008 (`@attr_assign`) lifetime check now passes `syms`/`sym_len` so ident lookups in the RHS are accurate
+- **fix(sema)**: struct literal lifetime now computed as the **minimum** of field lifetimes (was incorrectly taking the maximum, effectively always returning `persistent`)
+- **chore**: `test/scripts/test_lifetime_infer.chasm` added — covers literals, `persist_copy`, `copy_to_script`, and chained assignment
+- **chore**: `release.yml` concat order updated to include `compiler/ir/` and drop the now-removed `codegen/exprs.chasm` / `codegen/stmts.chasm`
+- **chore**: bootstrap rebuilt and verified at fixpoint; CLI version bumped to `1.9.9`
+
+---
+
 ## [1.9.8] — 2026-04-12 — IR codegen: typed @attr arrays, short-circuit, match fixes
 
 ### Summary

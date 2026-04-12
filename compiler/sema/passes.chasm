@@ -59,13 +59,17 @@ defp sema_stmt(sctx :: SCtx,
       end
     end
     sctx.types.set(idx, val_t)
-    # Extract lifetime from explicit annotation (frame=1, script=2, persistent=3)
-    decl_lt = 1
+    # Extract lifetime from explicit annotation; infer from RHS when none given.
+    decl_lt    = 1
+    has_lt_ann = false
     if node.c >= 0 do
       tref_lt :: Node = sctx.pool.get(node.c)
-      if tref_lt.name == "frame"      do decl_lt = 1 end
-      if tref_lt.name == "script"     do decl_lt = 2 end
-      if tref_lt.name == "persistent" do decl_lt = 3 end
+      if tref_lt.name == "frame"      do decl_lt = 1 has_lt_ann = true end
+      if tref_lt.name == "script"     do decl_lt = 2 has_lt_ann = true end
+      if tref_lt.name == "persistent" do decl_lt = 3 has_lt_ann = true end
+    end
+    if has_lt_ann == false do
+      decl_lt = expr_lifetime(sctx.pool, sctx.ch, attrs, syms, sym_len, node.b)
     end
     sym_len = sym_push_lt(syms, sym_len, node.name, val_t, elem_t, decl_lt)
     return sym_len
@@ -96,7 +100,8 @@ defp sema_stmt(sctx :: SCtx,
             end
           end
         end
-        sym_len = sym_push(syms, sym_len, lhs_node.name, val_t, elem_t_as)
+        inferred_lt = expr_lifetime(sctx.pool, sctx.ch, attrs, syms, sym_len, node.b)
+        sym_len = sym_push_lt(syms, sym_len, lhs_node.name, val_t, elem_t_as, inferred_lt)
       end
     end
     sctx.types.set(idx, val_t)
@@ -166,7 +171,7 @@ defp sema_stmt(sctx :: SCtx,
     if ai >= 0 do
       attr_info  = attrs.get(ai)
       attr_lt    = attr_info.lifetime
-      rhs_lt     = expr_lifetime(sctx.pool, sctx.ch, attrs, node.b)
+      rhs_lt     = expr_lifetime(sctx.pool, sctx.ch, attrs, syms, sym_len, node.b)
       # If rhs is a locally-declared variable with an explicit lifetime annotation,
       # use that declared lifetime (e.g. `x :: persistent = persist_copy(...)`)
       rhs_node_e8 :: Node = sctx.pool.get(node.b)

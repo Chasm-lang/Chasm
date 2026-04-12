@@ -1,4 +1,4 @@
-defp expr_lifetime(pool :: []Node, ch :: []int, attrs :: []AttrInfo, idx :: int) :: int do
+defp expr_lifetime(pool :: []Node, ch :: []int, attrs :: []AttrInfo, syms :: []Sym, sym_len :: int, idx :: int) :: int do
   if idx < 0 do return 1 end
   node = pool.get(idx)
   tag  = node.tag
@@ -20,9 +20,8 @@ defp expr_lifetime(pool :: []Node, ch :: []int, attrs :: []AttrInfo, idx :: int)
     cl = node.b
     max_lt = 1
     ai = 0
-    
     while ai < cl do
-      arg_lt = expr_lifetime(pool, ch, attrs, ch.get(cs + ai))
+      arg_lt = expr_lifetime(pool, ch, attrs, syms, sym_len, ch.get(cs + ai))
       if arg_lt > max_lt do max_lt = arg_lt end
       ai = ai + 1
     end
@@ -30,67 +29,66 @@ defp expr_lifetime(pool :: []Node, ch :: []int, attrs :: []AttrInfo, idx :: int)
   end
   # Binop/unary: result lifetime is max of operand lifetimes
   if tag == :binop do
-    la = expr_lifetime(pool, ch, attrs, node.a)
-    lb = expr_lifetime(pool, ch, attrs, node.b)
+    la = expr_lifetime(pool, ch, attrs, syms, sym_len, node.a)
+    lb = expr_lifetime(pool, ch, attrs, syms, sym_len, node.b)
     if la > lb do return la end
     return lb
   end
   if tag == :unary do
-    return expr_lifetime(pool, ch, attrs, node.a)
+    return expr_lifetime(pool, ch, attrs, syms, sym_len, node.a)
   end
   # Literals are compile-time constants — no arena dependency, assignable anywhere
-  if tag == :int_lit   do return 3 end
-  if tag == :float_lit do return 3 end
-  if tag == :bool_lit  do return 3 end
-  if tag == :atom_lit  do return 3 end
+  if tag == :int_lit    do return 3 end
+  if tag == :float_lit  do return 3 end
+  if tag == :bool_lit   do return 3 end
+  if tag == :atom_lit   do return 3 end
   if tag == :string_lit do return 3 end
   # Enum variant access (field_get on enum type) is a compile-time constant
   if tag == :field_get do
-    recv_lt = expr_lifetime(pool, ch, attrs, node.a)
+    recv_lt = expr_lifetime(pool, ch, attrs, syms, sym_len, node.a)
     # If receiver is an @attr, carry its lifetime; otherwise persistent (enum constant)
     if recv_lt > 1 do return recv_lt end
     return 3
   end
-  # Struct literal: lifetime is max of all field values
+  # Struct literal: lifetime is the minimum of all field value lifetimes.
+  # A struct is only as durable as its least durable field.
   if tag == :struct_lit do
     cs = node.a
     cl = node.b
-    max_lt = 3
+    min_lt = 3
     fi = 0
     while fi < cl do
       fnode_idx = ch.get(cs + fi)
       fnode     = pool.get(fnode_idx)
-      flt = expr_lifetime(pool, ch, attrs, fnode.a)
-      if flt > max_lt do max_lt = flt end
+      flt = expr_lifetime(pool, ch, attrs, syms, sym_len, fnode.a)
+      if flt < min_lt do min_lt = flt end
       fi = fi + 1
     end
-    return max_lt
+    return min_lt
   end
-  # struct update (with): lifetime is max of base and overrides
+  # struct update (with): lifetime is min of base and override field lifetimes
   if tag == :struct_update do
-    base_lt = expr_lifetime(pool, ch, attrs, node.a)
-    max_lt  = base_lt
+    base_lt = expr_lifetime(pool, ch, attrs, syms, sym_len, node.a)
+    min_lt  = base_lt
     oi = 0
     while oi < node.c do
       fnode_idx = ch.get(node.b + oi)
       fnode     = pool.get(fnode_idx)
-      flt = expr_lifetime(pool, ch, attrs, fnode.a)
-      if flt > max_lt do max_lt = flt end
+      flt = expr_lifetime(pool, ch, attrs, syms, sym_len, fnode.a)
+      if flt < min_lt do min_lt = flt end
       oi = oi + 1
     end
-    return max_lt
+    return min_lt
   end
-  # Local variable: if it was assigned from a @script attr, it carries script lifetime.
-  # We can't track this precisely without a full dataflow pass, so we return script (2)
-  # as a conservative safe default — the common case is locals derived from @script attrs.
-  if tag == :ident do return 2 end
+  # Local variable: look up its inferred lifetime in the symbol table.
+  if tag == :ident do return sym_lifetime_lookup(syms, sym_len, node.name) end
   if tag == :method_call do
-    max_lt = expr_lifetime(pool, ch, attrs, node.a)
+    max_lt = expr_lifetime(pool, ch, attrs, syms, sym_len, node.a)
     cs = node.b
     cl = node.c
     ai = 0
     while ai < cl do
-      arg_lt = expr_lifetime(pool, ch, attrs, ch.get(cs + ai))
+      arg_lt = expr_lifetime(pool, ch, attrs, syms, sym_len, ch.get(cs + ai))
       if arg_lt > max_lt do max_lt = arg_lt end
       ai = ai + 1
     end

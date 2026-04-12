@@ -22,7 +22,7 @@ import (
 	"unicode"
 )
 
-const version = "1.9.7"
+const version = "1.9.9"
 
 // tmpPath returns a path inside the temp directory used by the bootstrap binary.
 // On Unix the bootstrap binary hardcodes /tmp, so we match that.

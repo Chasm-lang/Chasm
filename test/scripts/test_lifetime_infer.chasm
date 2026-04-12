@@ -1,0 +1,44 @@
+# Test: exact lifetime inference
+#
+# The compiler infers the lifetime of local variables from their RHS expression.
+# No explicit `:: frame / :: script / :: persistent` annotations are needed on locals.
+#
+# Lifetime rules:
+#   literals (int, float, bool, atom, string) → persistent (no arena dependency)
+#   persist_copy(x)   → persistent
+#   copy_to_script(x) → script
+#   @attr reference   → the attr's declared lifetime
+#   binop / call      → max lifetime of operands / arguments
+#   chained locals    → follow the chain
+
+@count      :: script     = 0
+@high_score :: persistent = 0
+@label      :: persistent = ""
+
+def update(n :: int) do
+  # Literal → persistent; no annotation needed.
+  # Old: base :: persistent = persist_copy(100)
+  base = 100
+  @high_score = base
+
+  # persist_copy result → persistent; chaining through `total` also works.
+  saved = persist_copy(n)
+  total = saved
+  @high_score = total
+
+  # copy_to_script result → script lifetime.
+  # Old: s :: script = copy_to_script(n)
+  s = copy_to_script(n)
+  @count = s
+
+  # String literal → persistent.
+  lbl = "score"
+  @label = lbl
+end
+
+def main() do
+  update(42)
+  print(@high_score)
+  print(@count)
+  print(@label)
+end
