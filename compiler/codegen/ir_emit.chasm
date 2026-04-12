@@ -391,11 +391,22 @@ defp ir_emit_fn(cctx :: CCtx, prog :: IRProg, fn_def :: IRFn) do
               cap_nd_af :: Node = pool.get(ch.get(inn_ic.a))
               def_idx_af = ch.get(inn_ic.a + 1)
               def_tid_af = types.get(def_idx_af)
+              def_nd_af :: Node = pool.get(def_idx_af)
               tn_af = struct_name_by_tid(structs, def_tid_af)
               lt_af = dn_ic.b
               arena_af = "&ctx->script"
               if lt_af == 2 do arena_af = "&ctx->persistent" end
-              vc_ic = str_concat("chasm_array_fixed_init_", str_concat(tn_af, str_concat("(", str_concat(arena_af, str_concat(", ", str_concat(cap_nd_af.name, str_concat(", (", str_concat(tn_af, "){0})"))))))))
+              if str_len(tn_af) > 0 do
+                # Struct element type: chasm_array_fixed_init_TypeName(arena, cap, (TypeName){0})
+                vc_ic = str_concat("chasm_array_fixed_init_", str_concat(tn_af, str_concat("(", str_concat(arena_af, str_concat(", ", str_concat(cap_nd_af.name, str_concat(", (", str_concat(tn_af, "){0})"))))))))
+              else
+                # Primitive element type: use int or float helper
+                if def_tid_af == @TID_FLOAT do
+                  vc_ic = str_concat("chasm_array_fixed_new_float(", str_concat(arena_af, str_concat(", ", str_concat(cap_nd_af.name, str_concat(", ", str_concat(def_nd_af.name, ")"))))))
+                else
+                  vc_ic = str_concat("chasm_array_fixed_new_int(", str_concat(arena_af, str_concat(", ", str_concat(cap_nd_af.name, str_concat(", ", str_concat(def_nd_af.name, ")"))))))
+                end
+              end
             end
           end
           if str_len(vc_ic) > 0 do

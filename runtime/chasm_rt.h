@@ -368,6 +368,20 @@ static inline const char* chasm_array_pop_s(ChasmCtx *ctx, ChasmArray *a) { (voi
 /* ---- typed (struct) array ----------------------------------------- */
 /* Constructor: pass sizeof(YourStruct) as elem_size.
  * Codegen emits per-struct wrappers that call these. */
+static inline ChasmArray chasm_array_fixed_new_int(ChasmArena *arena, int64_t cap, int64_t def) {
+    if (cap <= 0) cap = 8;
+    void *d = chasm_alloc(arena, (size_t)cap * sizeof(int64_t), _Alignof(int64_t));
+    if (!d) return (ChasmArray){NULL, 0, cap, 8};
+    int64_t *p = (int64_t*)d; for (int64_t _i = 0; _i < cap; _i++) p[_i] = def;
+    return (ChasmArray){d, cap, cap, 8};
+}
+static inline ChasmArray chasm_array_fixed_new_float(ChasmArena *arena, int64_t cap, double def) {
+    if (cap <= 0) cap = 8;
+    void *d = chasm_alloc(arena, (size_t)cap * sizeof(double), _Alignof(double));
+    if (!d) return (ChasmArray){NULL, 0, cap, (int64_t)sizeof(double)};
+    double *p = (double*)d; for (int64_t _i = 0; _i < cap; _i++) p[_i] = def;
+    return (ChasmArray){d, cap, cap, (int64_t)sizeof(double)};
+}
 static inline ChasmArray chasm_array_new_typed(ChasmCtx *ctx, int64_t cap, int64_t elem_size) {
     if (cap <= 0 || elem_size <= 0) return (ChasmArray){NULL, 0, 0, elem_size};
     void *d = malloc((size_t)cap * (size_t)elem_size);

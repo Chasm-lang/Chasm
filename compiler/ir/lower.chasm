@@ -724,7 +724,10 @@ defp lower_stmt(lctx :: LowerCtx, idx :: int) do
     iter_v = lower_expr(lctx, node.a)
     lctx_emit(lctx, IROp{ op: :for_begin, dst: irval_void(), a: iter_v, b: irval_void(),
     name: node.name, ai: 0, ac: 0, line: node.line, col: node.col })
-    lctx_declare(lctx, node.name, iter_v.elem_tid)
+    # Do NOT register the for-variable in lctx_declare — it is scoped inside the { }
+    # block that for_begin/for_end emit, so it must never be treated as "declared"
+    # at function scope. Registering it prevents same-named vars in later loops from
+    # getting their own var_decl.
     lower_block_body(lctx, node.b)
     lctx_emit(lctx, IROp{ op: :for_end, dst: irval_void(), a: irval_void(), b: irval_void(),
     name: "", ai: 0, ac: 0, line: node.line, col: node.col })
