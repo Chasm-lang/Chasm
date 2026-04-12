@@ -54,16 +54,29 @@ The compiler infers the lifetime of every expression:
 |---|---|
 | `@attr` reference | The attr's declared lifetime |
 | Literal (`0`, `0.0`, `true`, `:atom`, `"text"`) | Persistent — assignable anywhere |
-| Local variable | Inferred from its assigned value |
+| Function parameter (`x :: int`) | Frame — always conservatively treated as frame |
+| Local variable | Inferred from its assigned value (see below) |
+| `a + b`, `a * b`, etc. | Max lifetime of both operands |
 | `f(a, b, ...)` call | Max lifetime of all arguments |
 | `recv.method(a, ...)` call | Max lifetime of receiver + arguments |
-| `a + b`, `a * b`, etc. | Max lifetime of both operands |
-| `copy_to_script(x)` | Script |
-| `persist_copy(x)` | Persistent |
+| `copy_to_script(x)` | Script (regardless of `x`'s lifetime) |
+| `persist_copy(x)` | Persistent (regardless of `x`'s lifetime) |
 
-Local variable lifetime is inferred from the right-hand side at declaration: a local assigned from `persist_copy(x)` has persistent lifetime; one assigned from a `@script` attr has script lifetime; one assigned from an integer literal has persistent lifetime. The inferred lifetime propagates through chains of assignments. Explicit `:: frame / :: script / :: persistent` annotations on locals are accepted but not required.
+**Locals are inferred, not assumed frame.** A local assigned from `persist_copy(x)` has persistent lifetime; one assigned from a `@script` attr has script lifetime; one from a literal has persistent lifetime. The inferred lifetime propagates through chains — `b = a` gives `b` the same lifetime as `a`. Explicit `:: frame / :: script / :: persistent` annotations on locals are accepted but rarely needed.
 
-This means expressions that involve `@script` attrs automatically carry script lifetime, so assigning them back to a `@script` attr is fine without promotion. Only when a value that is genuinely frame-lifetime (e.g. derived from a frame-only function parameter with no promotion) flows into a longer-lived attr does the compiler require an explicit promotion call.
+**Function parameters are always frame.** The compiler cannot know what the caller passed, so it treats all parameters conservatively as frame. To store a parameter into a `@script` or `@persistent` attr, promote it explicitly.
+
+**Literals are persistent.** Mixing a `@script` attr with a literal (e.g. `@count * 2`) infers persistent because `max(script, persistent) = persistent`. E008 is most commonly triggered by assigning a `@script` attr directly to a `@persistent` one:
+
+```chasm
+@score      :: script     = 0
+@high_score :: persistent = 0
+
+def update() do
+  @high_score = @score               # E008: script cannot flow into persistent
+  @high_score = persist_copy(@score) # OK: explicitly copy into persistent arena
+end
+```
 
 ### Promotion Functions
 
