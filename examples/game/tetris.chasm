@@ -37,8 +37,8 @@
 
 # ---- Lock delay -------------------------------------------------------------
 @lock_t :: script = 0.0
-# NOTE: on_floor is NOT stored state — it is computed fresh each frame
-# as a frame-lifetime local in on_tick, derived from the current piece position.
+# NOTE: on_floor is NOT stored state — it is recomputed each tick
+# from the current piece position in on_tick.
 
 # ---- DAS (delayed auto-shift) -----------------------------------------------
 @das_t   :: script = 0.0
@@ -60,7 +60,7 @@
 
 # ---- GC stress test ---------------------------------------------------------
 # Hold LEFT_SHIFT during play to run 500 heavy float computations per tick.
-# All temporaries are frame-lifetime — wiped in one pointer reset each tick.
+# All temporaries are locals — wiped in one pointer reset each tick (frame arena).
 # No GC. No accumulation. Watch the graph stay flat under load.
 @stress_mode :: script = 0
 
