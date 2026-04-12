@@ -81,7 +81,23 @@ defp ir_emit_fn(cctx :: CCtx, prog :: IRProg, fn_def :: IRFn) do
     end
 
     if k == :field_get do
-      sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat(c_type(op.dst.tid, prog.structs), str_concat(" ", str_concat(op.dst.tmp, str_concat(" = ", str_concat(op.a.tmp, str_concat(".", str_concat(op.name, ";")))))))))
+      # Check if receiver is an enum type — emit TypeName_Variant, not TypeName.Variant
+      is_enum_fe = false
+      fe_i = 0
+      while fe_i < prog.structs.len do
+        sd_fe :: StructDef = prog.structs.get(fe_i)
+        if sd_fe.type_id == op.a.tid do
+          nd_fe :: Node = cctx.pool.get(sd_fe.node_idx)
+          if nd_fe.tag == :enum_decl do is_enum_fe = true end
+        end
+        fe_i = fe_i + 1
+      end
+      if is_enum_fe do
+        enum_const_fe = str_concat(op.a.tmp, str_concat("_", op.name))
+        sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat(c_type(op.dst.tid, prog.structs), str_concat(" ", str_concat(op.dst.tmp, str_concat(" = ", str_concat(enum_const_fe, ";")))))))
+      else
+        sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat(c_type(op.dst.tid, prog.structs), str_concat(" ", str_concat(op.dst.tmp, str_concat(" = ", str_concat(op.a.tmp, str_concat(".", str_concat(op.name, ";")))))))))
+      end
     end
 
     if k == :index_get do
@@ -90,28 +106,54 @@ defp ir_emit_fn(cctx :: CCtx, prog :: IRProg, fn_def :: IRFn) do
     end
 
     if k == :call do
-      a_str = args_str(prog, op.ai, op.ac)
-      sep_str = ""
-      if op.ac > 0 do sep_str = ", " end
-      call_nm = op.name
-      if op.ac > 0 do
-        if op.name == "print" do
-          arg0 :: IRVal = prog.args.get(op.ai)
-          if arg0.tid == @TID_STRING or arg0.tid == @TID_ATOM do
-            call_nm = str_concat(op.name, "_s")
-          end
-          if arg0.tid == @TID_FLOAT do
-            call_nm = str_concat(op.name, "_f")
-          end
-          if arg0.tid == @TID_BOOL do
-            call_nm = str_concat(op.name, "_b")
+      # Special: typed array_new(TypeName, cap) → chasm_array_new_typed(ctx, cap, sizeof(TypeName))
+      is_typed_arr_new = false
+      if op.name == "array_new" do
+        if op.ac == 2 do
+          a0_ta :: IRVal = prog.args.get(op.ai)
+          if a0_ta.tid == 0 do
+            is_typed_arr_new = true
+            cap_ta :: IRVal = prog.args.get(op.ai + 1)
+            sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat("ChasmArray ", str_concat(op.dst.tmp, str_concat(" = chasm_array_new_typed(ctx, ", str_concat(cap_ta.tmp, str_concat(", sizeof(", str_concat(a0_ta.tmp, "));"))))))))
           end
         end
       end
-      if str_len(op.dst.tmp) > 0 do
-        sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat(c_type(op.dst.tid, prog.structs), str_concat(" ", str_concat(op.dst.tmp, str_concat(" = chasm_", str_concat(call_nm, str_concat("(ctx", str_concat(sep_str, str_concat(a_str, ");"))))))))))
-      else
-        sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat("chasm_", str_concat(call_nm, str_concat("(ctx", str_concat(sep_str, str_concat(a_str, ");")))))))
+      if is_typed_arr_new == false do
+        a_str = args_str(prog, op.ai, op.ac)
+        sep_str = ""
+        if op.ac > 0 do sep_str = ", " end
+        call_nm = op.name
+        if op.ac > 0 do
+          if op.name == "print" do
+            arg0 :: IRVal = prog.args.get(op.ai)
+            if arg0.tid == @TID_STRING or arg0.tid == @TID_ATOM do
+              call_nm = str_concat(op.name, "_s")
+            end
+            if arg0.tid == @TID_FLOAT do
+              call_nm = str_concat(op.name, "_f")
+            end
+            if arg0.tid == @TID_BOOL do
+              call_nm = str_concat(op.name, "_b")
+            end
+          end
+          # key_down/pressed/released/up: if arg is string/atom, wrap with chasm_key_code
+          is_key_fn = false
+          if op.name == "key_down"     do is_key_fn = true end
+          if op.name == "key_pressed"  do is_key_fn = true end
+          if op.name == "key_released" do is_key_fn = true end
+          if op.name == "key_up"       do is_key_fn = true end
+          if is_key_fn do
+            arg0k :: IRVal = prog.args.get(op.ai)
+            if arg0k.tid == @TID_STRING or arg0k.tid == @TID_ATOM do
+              a_str = str_concat("chasm_key_code(ctx, ", str_concat(arg0k.tmp, ")"))
+            end
+          end
+        end
+        if str_len(op.dst.tmp) > 0 do
+          sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat(c_type(op.dst.tid, prog.structs), str_concat(" ", str_concat(op.dst.tmp, str_concat(" = chasm_", str_concat(call_nm, str_concat("(ctx", str_concat(sep_str, str_concat(a_str, ");"))))))))))
+        else
+          sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat("chasm_", str_concat(call_nm, str_concat("(ctx", str_concat(sep_str, str_concat(a_str, ");")))))))
+        end
       end
     end
 
@@ -130,7 +172,11 @@ defp ir_emit_fn(cctx :: CCtx, prog :: IRProg, fn_def :: IRFn) do
         et_suf_mc = array_elem_suffix(prog.structs, op.a.elem_tid)
         fn_call_mc = str_concat("chasm_array_", str_concat(op.name, str_concat(et_suf_mc, str_concat("(ctx, &", str_concat(recv_s, str_concat(sep_rest, str_concat(rest_a, ")")))))))
       else
-        fn_call_mc = str_concat("chasm_", str_concat(op.name, str_concat("(ctx, ", str_concat(recv_s, str_concat(sep_rest, str_concat(rest_a, ")"))))))
+        if op.a.tid == @TID_STRING or op.a.tid == @TID_ATOM do
+          fn_call_mc = str_concat("chasm_str_", str_concat(op.name, str_concat("(ctx, ", str_concat(recv_s, str_concat(sep_rest, str_concat(rest_a, ")"))))))
+        else
+          fn_call_mc = str_concat("chasm_", str_concat(op.name, str_concat("(ctx, ", str_concat(recv_s, str_concat(sep_rest, str_concat(rest_a, ")"))))))
+        end
       end
       end
       if str_len(op.dst.tmp) > 0 do
@@ -151,7 +197,7 @@ defp ir_emit_fn(cctx :: CCtx, prog :: IRProg, fn_def :: IRFn) do
     end
 
     if k == :return do
-      if str_len(op.a.tmp) > 0 do
+      if str_len(op.a.tmp) > 0 and fn_def.ret_tid != @TID_VOID do
         sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat("return ", str_concat(op.a.tmp, ";"))))
       else
         sec_emit(cctx, @SEC_BODY, str_concat(ind, "return;"))
@@ -224,7 +270,21 @@ defp ir_emit_fn(cctx :: CCtx, prog :: IRProg, fn_def :: IRFn) do
         fields_s = str_concat(fields_s, fv15.tmp)
         fi15 = fi15 + 1
       end
-      sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat(sn, str_concat(" ", str_concat(op.dst.tmp, str_concat(" = (", str_concat(sn, str_concat("){ ", str_concat(fields_s, " };")))))))))    end
+      sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat(sn, str_concat(" ", str_concat(op.dst.tmp, str_concat(" = (", str_concat(sn, str_concat("){ ", str_concat(fields_s, " };")))))))))
+    end
+
+    if k == :struct_update do
+      # args[op.ai] = base; then pairs of (field_name, field_value)
+      base_su :: IRVal = prog.args.get(op.ai)
+      sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat(op.dst.tmp, str_concat(" = ", str_concat(base_su.tmp, ";")))))
+      su_i = 1
+      while su_i < op.ac - 1 do
+        fname_su :: IRVal = prog.args.get(op.ai + su_i)
+        fval_su  :: IRVal = prog.args.get(op.ai + su_i + 1)
+        sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat(op.dst.tmp, str_concat(".", str_concat(fname_su.tmp, str_concat(" = ", str_concat(fval_su.tmp, ";")))))))
+        su_i = su_i + 2
+      end
+    end
 
       if k == :tuple_new do
         tsize = op.ac
@@ -300,7 +360,47 @@ defp ir_emit_fn(cctx :: CCtx, prog :: IRProg, fn_def :: IRFn) do
             nl_ic = str_len(inn_ic.name)
             vc_ic = str_concat("\042", str_concat(str_slice(inn_ic.name, 1, nl_ic), "\042"))
           end
-          sec_emit(cctx_ic, @SEC_BODY, str_concat("  g_", str_concat(an_ic, str_concat(" = ", str_concat(vc_ic, ";")))))
+          if inn_ic.tag == :field_get do
+            recv_ic :: Node = pool.get(inn_ic.a)
+            vc_ic = str_concat(recv_ic.name, str_concat("_", inn_ic.name))
+          end
+          if inn_ic.tag == :struct_lit do
+            # Struct literal: emit zero-init then assign each field
+            it_sl = types.get(dn_ic.a)
+            tn_sl = c_type(it_sl, structs)
+            sec_emit(cctx_ic, @SEC_BODY, str_concat("  g_", str_concat(an_ic, str_concat(" = (", str_concat(tn_sl, "){0};")))))
+            fs_sl = inn_ic.a
+            fl_sl = inn_ic.b
+            fi_sl = 0
+            while fi_sl < fl_sl do
+              fa_idx = ch.get(fs_sl + fi_sl)
+              fa_nd :: Node = pool.get(fa_idx)
+              fv_nd :: Node = pool.get(fa_nd.a)
+              fv_str = fv_nd.name
+              if fv_nd.tag == :atom_lit do
+                nla = str_len(fv_nd.name)
+                fv_str = str_concat("\042", str_concat(str_slice(fv_nd.name, 1, nla), "\042"))
+              end
+              sec_emit(cctx_ic, @SEC_BODY, str_concat("  g_", str_concat(an_ic, str_concat(".", str_concat(fa_nd.name, str_concat(" = ", str_concat(fv_str, ";")))))))
+              fi_sl = fi_sl + 1
+            end
+            vc_ic = ""
+          end
+          if inn_ic.tag == :call do
+            if inn_ic.name == "array_fixed" do
+              cap_nd_af :: Node = pool.get(ch.get(inn_ic.a))
+              def_idx_af = ch.get(inn_ic.a + 1)
+              def_tid_af = types.get(def_idx_af)
+              tn_af = struct_name_by_tid(structs, def_tid_af)
+              lt_af = dn_ic.b
+              arena_af = "&ctx->script"
+              if lt_af == 2 do arena_af = "&ctx->persistent" end
+              vc_ic = str_concat("chasm_array_fixed_init_", str_concat(tn_af, str_concat("(", str_concat(arena_af, str_concat(", ", str_concat(cap_nd_af.name, str_concat(", (", str_concat(tn_af, "){0})"))))))))
+            end
+          end
+          if str_len(vc_ic) > 0 do
+            sec_emit(cctx_ic, @SEC_BODY, str_concat("  g_", str_concat(an_ic, str_concat(" = ", str_concat(vc_ic, ";")))))
+          end
         end
         ib_ic = ib_ic + 1
       end
@@ -310,13 +410,15 @@ defp ir_emit_fn(cctx :: CCtx, prog :: IRProg, fn_def :: IRFn) do
     # Lower AST to IR and emit functions
     prog_ic :: IRProg = lower(pool, ch, root, types, structs, fields, fns)
     fi_ic = 0
+    ir_fi_ic = 0
+    has_main_ic = false
     while fi_ic < fns.len do
       fs_ic :: FnSig  = fns.get(fi_ic)
-      fd_ic :: IRFn   = prog_ic.fns.get(fi_ic)
       fn_nd_ic :: Node = pool.get(fs_ic.node_idx)
       fps_ic = fn_nd_ic.a
       fpc_ic = fn_nd_ic.b
       fnm_ic = fn_split_name(fn_nd_ic.name)
+      if fnm_ic == "main" do has_main_ic = true end
       frc_ic = fn_actual_ret_c(pool, ch, fs_ic.node_idx, structs)
       pstr_ic = ""
       j_ic = 0
@@ -329,18 +431,25 @@ defp ir_emit_fn(cctx :: CCtx, prog :: IRProg, fn_def :: IRFn) do
         pstr_ic = str_concat(pstr_ic, str_concat(", ", str_concat(pct_ic, str_concat(" ", pnd_ic.name))))
         j_ic = j_ic + 1
       end
-      sec_emit(cctx_ic, @SEC_BODY, str_concat(frc_ic, str_concat(" chasm_", str_concat(fnm_ic, str_concat("(ChasmCtx *ctx", str_concat(pstr_ic, ") {"))))))
-      ir_emit_fn(cctx_ic, prog_ic, fd_ic)
-      sec_emit(cctx_ic, @SEC_BODY, "}")
-      sec_emit(cctx_ic, @SEC_BODY, "")
+      if fn_nd_ic.tag != :extern_decl do
+        sec_emit(cctx_ic, @SEC_BODY, str_concat(frc_ic, str_concat(" chasm_", str_concat(fnm_ic, str_concat("(ChasmCtx *ctx", str_concat(pstr_ic, ") {"))))))
+        fd_ic :: IRFn = prog_ic.fns.get(ir_fi_ic)
+        ir_emit_fn(cctx_ic, prog_ic, fd_ic)
+        ir_fi_ic = ir_fi_ic + 1
+        sec_emit(cctx_ic, @SEC_BODY, "}")
+        sec_emit(cctx_ic, @SEC_BODY, "")
+      end
       fi_ic = fi_ic + 1
     end
-    # Emit chasm_main for top-level statements (stored at index fns.len in IRProg.fns)
-    tl_fn_ic :: IRFn = prog_ic.fns.get(fns.len)
-    if tl_fn_ic.ops_len > 0 do
+    # Emit chasm_main for top-level statements (stored at index ir_fi_ic in IRProg.fns).
+    # Skip if a def main() was already emitted above.
+    tl_fn_ic :: IRFn = prog_ic.fns.get(ir_fi_ic)
+    if has_main_ic == false do
       sec_emit(cctx_ic, @SEC_FWD, "void chasm_main(ChasmCtx *ctx);")
       sec_emit(cctx_ic, @SEC_BODY, "void chasm_main(ChasmCtx *ctx) {")
-      ir_emit_fn(cctx_ic, prog_ic, tl_fn_ic)
+      if tl_fn_ic.ops_len > 0 do
+        ir_emit_fn(cctx_ic, prog_ic, tl_fn_ic)
+      end
       sec_emit(cctx_ic, @SEC_BODY, "}")
       sec_emit(cctx_ic, @SEC_BODY, "")
     end

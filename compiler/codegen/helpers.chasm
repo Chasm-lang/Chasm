@@ -6,13 +6,13 @@
 # ---- Output section IDs -------------------------------------------------------
 # Sections are flushed in numeric order by flush_sections().
 
-@SEC_BUF_CAP = 65536# max lines per section (guards against overflow)
+@SEC_BUF_CAP :: frame = 65536# max lines per section (guards against overflow)
 
-@SEC_PRE   = 0# preamble: header comment, #include
-@SEC_TYPES = 1# enum and struct typedefs
-@SEC_HELP  = 2# typed array helpers
-@SEC_FWD   = 3# function forward declarations
-@SEC_BODY  = 4# function bodies, module attrs, chasm_main
+@SEC_PRE   :: frame = 0# preamble: header comment, #include
+@SEC_TYPES :: frame = 1# enum and struct typedefs
+@SEC_HELP  :: frame = 2# typed array helpers
+@SEC_FWD   :: frame = 3# function forward declarations
+@SEC_BODY  :: frame = 4# function bodies, module attrs, chasm_main
 
 defstruct SectionBuf do
   lines :: []string

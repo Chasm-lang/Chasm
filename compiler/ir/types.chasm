@@ -54,4 +54,6 @@ defstruct LowerCtx do
   tc      :: []int    # cursor[0] = next temporary index
   vars    :: []VarElem
   var_len :: []int    # cursor[0] = current declared-var count
+  attr_elems :: []VarElem
+  attr_len   :: []int  # cursor[0] = number of @attr elem_tid entries
 end

@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.9.8] — 2026-04-12 — IR codegen: typed @attr arrays, short-circuit, match fixes
+
+### Summary
+
+Completes the IR-only codegen path. Typed arrays on `@attr` globals now emit the correct `_TypeName` variants for `.get()`, `.set()`, and `.push()`. Short-circuit `and`/`or` and `match` if-else chains are fixed in the IR lowering pass. Bootstrap verified at fixpoint.
+
+### Changes
+
+- **feat(ir)**: `ir_codegen` replaces the old `emit_fn`/`emit_stmt` path as the sole codegen backend; `exprs.chasm` and `stmts.chasm` removed
+- **fix(ir)**: typed `@attr` arrays — separate `attr_elems` registry in `LowerCtx` stores elem_tids for `@attr` variables so `.get()`/`.set()` emit `chasm_array_get_TypeName`/`chasm_array_set_TypeName` instead of the untyped variants; fixes `rl_enemies` and `rl_object_pool`
+- **fix(ir)**: short-circuit `and`/`or` now emits correct branch structure in IR lowering
+- **fix(ir)**: `match` with an if-else chain lowered correctly
+- **fix(ir)**: extern fn alignment — separate `ir_fi_ic` counter tracks IRFn index independently of `fi_ic` (which includes extern decls), preventing function bodies from being assigned to the wrong function
+- **fix(ir)**: `key_down`/`key_pressed` atom args wrapped with `chasm_key_code()` for Raylib engine
+- **fix(ir)**: `array_new(Type, cap)` emits `chasm_array_new_typed` with correct `sizeof(Type)`
+- **fix(ir)**: void functions emit `return;` instead of `return t;`
+- **fix(ir)**: `module_init` handles `struct_lit` zero-init and `array_fixed` initializers
+- **chore**: bootstrap rebuilt and verified at fixpoint; CLI version bumped to `1.9.8`
+
+---
+
 ## [1.9.7] — 2026-04-03 — Parser error recovery
 
 ### Summary
