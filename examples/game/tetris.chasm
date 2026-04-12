@@ -186,8 +186,8 @@ end
 # Returns 1 if piece (t,r) placed at board position (bx,by) overlaps anything.
 defp collides(t :: int, r :: int, bx :: int, by :: int) :: int do
   for c in 0..4 do
-    cx :: frame = bx + pdx(t, r, c)
-    cy :: frame = by + pdy(t, r, c)
+    cx = bx + pdx(t, r, c)
+    cy = by + pdy(t, r, c)
     if board_get(cx, cy) != 0 do return 1 end
   end
   return 0
@@ -196,24 +196,24 @@ end
 # Stamp the active piece into the board.
 defp lock_piece() do
   for c in 0..4 do
-    cx :: frame = @px + pdx(@pt, @pr, c)
-    cy :: frame = @py + pdy(@pt, @pr, c)
+    cx = @px + pdx(@pt, @pr, c)
+    cy = @py + pdy(@pt, @pr, c)
     board_set(cx, cy, @pt)
   end
 end
 
 # Scan bottom-up, remove full rows, return count cleared.
 defp clear_lines() :: int do
-  cleared :: frame = 0
-  row :: frame = 19
+  cleared = 0
+  row = 19
   while row >= 0 do
-    full :: frame = 1
+    full = 1
     for col in 0..10 do
       if board_get(col, row) == 0 do full = 0 end
     end
     if full == 1 do
       cleared = cleared + 1
-      r2 :: frame = row
+      r2 = row
       while r2 > 0 do
         for col in 0..10 do
           board_set(col, r2, board_get(col, r2 - 1))
@@ -233,9 +233,9 @@ end
 
 # Simple LCG-style random piece 1-7 seeded from elapsed time.
 defp rand_piece() :: int do
-  t  :: frame = time() * 7919.0
-  n  :: frame = t - floor(t / 7.0) * 7.0
-  id :: frame = floor(n) + 1
+  t  = time() * 7919.0
+  n  = t - floor(t / 7.0) * 7.0
+  id = floor(n) + 1
   if id < 1 do id = 1 end
   if id > 7 do id = 7 end
   return copy_to_script(id)
@@ -255,20 +255,20 @@ end
 
 # Gravity interval in seconds per row (Guideline-ish curve).
 defp fall_interval() :: float do
-  s :: frame = 1.0 - (@level - 1) * 0.08
+  s = 1.0 - (@level - 1) * 0.08
   if s < 0.05 do s = 0.05 end
   return s
 end
 
 # Points for n cleared lines at current level.
 defp line_score(n :: int) :: int do
-  base :: frame = match n { 1=>100 2=>300 3=>500 4=>800 _=>0 }
+  base = match n { 1=>100 2=>300 3=>500 4=>800 _=>0 }
   return base * @level
 end
 
 # Lowest row the active piece can occupy without collision.
 defp ghost_row() :: int do
-  gy :: frame = @py
+  gy = @py
   while collides(@pt, @pr, @px, gy + 1) == 0 do
     gy = gy + 1
   end
@@ -277,7 +277,7 @@ end
 
 # Shared post-lock logic: clear lines, update score, spawn, check top-out.
 defp after_lock() do
-  n :: frame = clear_lines()
+  n = clear_lines()
   @lines = @lines + n
   @level = @lines / 10 + 1
   @score = @score + line_score(n)
@@ -355,7 +355,7 @@ def on_tick(dt :: float) do
   # Skip the first 60 frames (startup/load cost) so the graph shows steady-state.
   @ft_head = persist_copy((@ft_head + 1) - ((@ft_head + 1) / 120) * 120)
   if @ft_head > 60 do
-    ms :: frame = to_int(dt * 1000.0)
+    ms = to_int(dt * 1000.0)
     @ft_buf.set(@ft_head, ms)
   end
 
@@ -384,13 +384,13 @@ def on_tick(dt :: float) do
   # ---- Hold (C = 67) -------------------------------------------------------
   if key_pressed(67) and @hold_used == 0 do
     play_sound(@snd_hold)
-    prev :: frame = @hold_t
+    prev = @hold_t
     @hold_t    = @pt
     @hold_used = 1
     if prev == 0 do
       spawn_piece()
     else
-      @pt     = copy_to_script(prev)
+      @pt     = prev
       @pr     = 0
       @px     = 3
       @py     = 0
@@ -401,25 +401,25 @@ def on_tick(dt :: float) do
 
   # ---- Rotate (UP = 265) ---------------------------------------------------
   if key_pressed(265) do
-    nr :: frame = (@pr + 1) - ((@pr + 1) / 4) * 4
-    rotated :: frame = 0
+    nr      = (@pr + 1) - ((@pr + 1) / 4) * 4
+    rotated = 0
     if collides(@pt, nr, @px, @py) == 0 do
-      @pr = copy_to_script(nr)
+      @pr = nr
       rotated = 1
     end
     if rotated == 0 and collides(@pt, nr, @px - 1, @py) == 0 do
       @px = @px - 1
-      @pr = copy_to_script(nr)
+      @pr = nr
       rotated = 1
     end
     if rotated == 0 and collides(@pt, nr, @px + 1, @py) == 0 do
       @px = @px + 1
-      @pr = copy_to_script(nr)
+      @pr = nr
       rotated = 1
     end
     if rotated == 0 and collides(@pt, nr, @px - 2, @py) == 0 do
       @px = @px - 2
-      @pr = copy_to_script(nr)
+      @pr = nr
       rotated = 1
     end
     if rotated == 1 do
@@ -438,11 +438,11 @@ def on_tick(dt :: float) do
   end
 
   # ---- DAS — LEFT=263  RIGHT=262 -------------------------------------------
-  das_delay  :: frame = 0.17
-  das_repeat :: frame = 0.05
+  das_delay  = 0.17
+  das_repeat = 0.05
 
-  left_held  :: frame = key_down(263)
-  right_held :: frame = key_down(262)
+  left_held  = key_down(263)
+  right_held = key_down(262)
 
   if left_held and not right_held do
     if @das_dir != -1 do
@@ -488,15 +488,14 @@ def on_tick(dt :: float) do
   end
 
   # ---- Gravity + lock -------------------------------------------------------
-  # on_floor is frame-lifetime: computed fresh from current piece position.
-  # This means it can never be stale from a previous frame.
-  on_floor :: frame = collides(@pt, @pr, @px, @py + 1)
+  # Recomputed fresh each tick from the current piece position — never stale.
+  on_floor = collides(@pt, @pr, @px, @py + 1)
 
   # Cap dt so a lag spike (e.g. first frame after load) never skips rows.
-  step_dt :: frame = dt
+  step_dt = dt
   if step_dt > 0.05 do step_dt = 0.05 end
 
-  interval :: frame = fall_interval()
+  interval = fall_interval()
   if key_down(264) do interval = fall_interval() / 10.0 end
 
   if on_floor == 0 do
@@ -516,15 +515,15 @@ def on_tick(dt :: float) do
   end
 
   # ---- GC stress test ------------------------------------------------------
-  # SHIFT held = do 500 heavy float computations using frame-lifetime locals.
-  # All temporaries live in the frame arena — wiped by one pointer reset.
+  # SHIFT held = do 500 heavy float computations in local temporaries.
+  # All locals live in the frame arena — wiped by one pointer reset per tick.
   # No GC. No accumulation. Watch the graph stay flat under load.
   @stress_mode = 0
   if key_down(340) do
     @stress_mode = 1
-    acc :: frame = 0.0
+    acc = 0.0
     for i in 0..500 do
-      fi  :: frame = to_float(i)
+      fi  = to_float(i)
       acc = acc + sin(fi * 0.1) * cos(fi * 0.07) + sqrt(abs(fi - 250.0))
     end
     # Use acc so compiler can't eliminate the loop
@@ -555,8 +554,8 @@ end
 # Draw a piece preview centered inside a 192x192 panel.
 defp draw_preview(panel_x :: float, panel_y :: float, t :: int) do
   if t == 0 do return end
-  ox :: frame = panel_x + 32.0
-  oy :: frame = panel_y + 32.0
+  ox = panel_x + 32.0
+  oy = panel_y + 32.0
   for c in 0..4 do
     draw_texture(block_tex(t),
       ox + pdx(t, 0, c) * 32.0,
@@ -599,18 +598,18 @@ def on_draw() do
   # Locked cells
   for row in 0..20 do
     for col in 0..10 do
-      t :: frame = board_get(col, row)
+      t = board_get(col, row)
       if t > 0 do draw_cell(col, row, t, 0xFFFFFFFF) end
     end
   end
 
   # Ghost piece (only while playing)
   if @gstate == 1 do
-    gy :: frame = ghost_row()
+    gy = ghost_row()
     if gy > @py do
       for c in 0..4 do
-        gcol :: frame = @px + pdx(@pt, @pr, c)
-        grow :: frame = gy  + pdy(@pt, @pr, c)
+        gcol = @px + pdx(@pt, @pr, c)
+        grow = gy  + pdy(@pt, @pr, c)
         if grow >= 0 and grow <= 19 do
           draw_cell(gcol, grow, @pt, 0xFFFFFF44)
         end
@@ -620,8 +619,8 @@ def on_draw() do
 
   # Active piece
   for c in 0..4 do
-    col :: frame = @px + pdx(@pt, @pr, c)
-    row :: frame = @py + pdy(@pt, @pr, c)
+    col = @px + pdx(@pt, @pr, c)
+    row = @py + pdy(@pt, @pr, c)
     if row >= 0 and row <= 19 do
       draw_cell(col, row, @pt, 0xFFFFFFFF)
     end
@@ -671,14 +670,14 @@ def on_draw() do
   #   - script arena: never touched by a collector
   #   - persistent arena: never freed, never scanned
   # There is no garbage collector. There is nothing to pause.
-  graph_x :: frame = 10.0
-  graph_y :: frame = 680.0
-  graph_h :: frame = 40.0   # max bar height = 50ms scale
+  graph_x = 10.0
+  graph_y = 680.0
+  graph_h = 40.0   # max bar height = 50ms scale
   for i in 0..120 do
-    idx  :: frame = (i + @ft_head) - ((i + @ft_head) / 120) * 120
-    ms_v :: frame = @ft_buf.get(idx)
-    bar  :: frame = clamp(ms_v * 0.8, 0.0, graph_h)
-    col  :: frame = 0x44FF88FF
+    idx  = (i + @ft_head) - ((i + @ft_head) / 120) * 120
+    ms_v = @ft_buf.get(idx)
+    bar  = clamp(ms_v * 0.8, 0.0, graph_h)
+    col  = 0x44FF88FF
     if ms_v > 50 do col = 0xFF4422FF end   # red if over 50ms (sub-20fps)
     if ms_v > 33 do col = 0xFFAA00FF end   # orange if over 33ms (sub-30fps)
     draw_rect(graph_x + i * 1.0, graph_y + graph_h - bar, 1.0, bar, col)
