@@ -63,6 +63,11 @@ defp ir_emit_fn(cctx :: CCtx, prog :: IRProg, fn_def :: IRFn) do
           rhs_s = str_concat("(strcmp(", str_concat(la_s, str_concat(", ", str_concat(rb_s, str_concat(") ", str_concat(cmp_op2, " 0)"))))))
         end
       end
+      if op_s == "%" do
+        if lt == @TID_FLOAT do
+          rhs_s = str_concat("fmod(", str_concat(la_s, str_concat(", ", str_concat(rb_s, ")"))))
+        end
+      end
       sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat(c_type(op.dst.tid, prog.structs), str_concat(" ", str_concat(op.dst.tmp, str_concat(" = ", str_concat(rhs_s, ";")))))))
     end
 

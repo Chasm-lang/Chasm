@@ -234,7 +234,7 @@ end
 # Simple LCG-style random piece 1-7 seeded from elapsed time.
 defp rand_piece() :: int do
   t  = time() * 7919.0
-  n  = t - floor(t / 7.0) * 7.0
+  n  = t % 7.0
   id = floor(n) + 1
   if id < 1 do id = 1 end
   if id > 7 do id = 7 end
@@ -353,7 +353,7 @@ def on_tick(dt :: float) do
 
   # Record frame time into the persistent ring buffer.
   # Skip the first 60 frames (startup/load cost) so the graph shows steady-state.
-  @ft_head = persist_copy((@ft_head + 1) - ((@ft_head + 1) / 120) * 120)
+  @ft_head = persist_copy((@ft_head + 1) % 120)
   if @ft_head > 60 do
     ms = to_int(dt * 1000.0)
     @ft_buf.set(@ft_head, ms)
@@ -401,7 +401,7 @@ def on_tick(dt :: float) do
 
   # ---- Rotate (UP = 265) ---------------------------------------------------
   if key_pressed(265) do
-    nr      = (@pr + 1) - ((@pr + 1) / 4) * 4
+    nr      = (@pr + 1) % 4
     rotated = 0
     if collides(@pt, nr, @px, @py) == 0 do
       @pr = nr

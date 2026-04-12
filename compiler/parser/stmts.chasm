@@ -500,9 +500,10 @@ defp parse_file(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, cp ::
       at_line  = tok_line(tokens, pos)
       at_col   = tok_col(tokens, pos)
       pos      = pos + 1
-      # Parse :: lifetime annotation (e.g. :: script, :: frame, :: persistent)
-      # Store lifetime in node.b: 1=frame, 2=script, 3=persistent, 0=unknown
-      at_lifetime = 0
+      # Parse optional :: lifetime annotation.
+      # Store lifetime in node.b: 1=frame, 2=script, 3=persistent.
+      # Default is script (2) — the common case for active game state.
+      at_lifetime = 2
       if tok_kind(tokens, pos) == :colon_colon do
         pos = pos + 1  # skip ::
         if tok_kind(tokens, pos) == :ident do
@@ -521,20 +522,8 @@ defp parse_file(tokens :: []Token, pool :: []Node, np :: int, ch :: []int, cp ::
       np  = r.np
       cp  = r.cp
       val = r.node_idx
-      di = np
-      if at_lifetime == 0 do
-        # No :: lifetime → this is an assignment, not a declaration
-        lhs_at = np
-        np = alloc_node(pool, np, :at_ref, 0, 0, 0, at_name, at_line, at_col)
-        assign_at = np
-        np = alloc_node(pool, np, :at_assign, lhs_at, val, 0, at_name, at_line, at_col)
-        tl_at = np
-        np = alloc_node(pool, np, :toplevel_stmt, assign_at, 0, 0, "", at_line, at_col)
-        di = tl_at
-      else
-        di  = np
-        np  = alloc_node(pool, np, :at_decl, val, at_lifetime, 0, at_name, at_line, at_col)
-      end
+      di  = np
+      np  = alloc_node(pool, np, :at_decl, val, at_lifetime, 0, at_name, at_line, at_col)
       ch.set(cp, di)
       cp = cp + 1
     end
