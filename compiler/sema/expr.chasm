@@ -319,19 +319,19 @@ defp sema_expr(sctx :: SCtx,
       if mn == "has" do sctx.types.set(idx, @TID_BOOL) return @TID_BOOL end
       if mn == "del" do sctx.types.set(idx, @TID_VOID) return @TID_VOID end
       if mn == "set" do
-        # Infer value elem_type from the third arg (index 2): .set(key, val)
+        # Infer value elem_type from the second arg (index 1): .set(key, val)
         if cl >= 2 do
           val_arg_idx = sctx.ch.get(cs + 1)
-          val_t_map = sema_expr(sctx, syms, sym_len, dc, val_arg_idx)
+          val_t_map = sctx.types.get(val_arg_idx)
           if recv_node.tag == :ident do
             cur_et = sym_elem_lookup(syms, sym_len, recv_node.name)
-            if cur_et == 0 do
+            if cur_et == @TID_UNKNOWN do
               sym_set_elem(syms, sym_len, recv_node.name, val_t_map)
             end
           end
           if recv_node.tag == :at_ref do
             cur_et = sym_elem_lookup(syms, sym_len, recv_node.name)
-            if cur_et == 0 do
+            if cur_et == @TID_UNKNOWN do
               sym_set_elem(syms, sym_len, recv_node.name, val_t_map)
             end
           end
@@ -346,6 +346,10 @@ defp sema_expr(sctx :: SCtx,
         end
         if recv_node.tag == :at_ref do
           elem_t_map = sym_elem_lookup(syms, sym_len, recv_node.name)
+        end
+        if recv_node.tag == :field_get do
+          obj_t_map = sctx.types.get(recv_node.a)
+          elem_t_map = field_elem_lookup(sctx.fields, obj_t_map, recv_node.name)
         end
         sctx.types.set(idx, elem_t_map)
         return elem_t_map
