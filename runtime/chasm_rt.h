@@ -271,6 +271,12 @@ static inline bool        chasm_str_ends_with(ChasmCtx *ctx, const char *s, cons
     (void)ctx; if(!s||!suf)return 0;
     size_t ls=strlen(s),lx=strlen(suf); return ls>=lx&&memcmp(s+ls-lx,suf,lx)==0;
 }
+static inline int64_t chasm_str_find(ChasmCtx *ctx, const char *s, const char *sub) {
+    (void)ctx;
+    if (!s || !sub) return -1;
+    const char *p = strstr(s, sub);
+    return p ? (int64_t)(p - s) : -1;
+}
 static inline bool        chasm_str_eq(ChasmCtx *ctx, const char *a, const char *b) { (void)ctx; return a&&b&&strcmp(a,b)==0; }
 static inline const char *chasm_int_to_str(ChasmCtx *ctx, int64_t v) {
     char *b=(char*)chasm_alloc(&ctx->frame,24,1); if(!b)return "";

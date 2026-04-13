@@ -312,6 +312,8 @@ defp sema_expr(sctx :: SCtx,
       if mn == "starts_with" do sctx.types.set(idx, @TID_BOOL)   return @TID_BOOL   end
       if mn == "ends_with"   do sctx.types.set(idx, @TID_BOOL)   return @TID_BOOL   end
       if mn == "eq"          do sctx.types.set(idx, @TID_BOOL)   return @TID_BOOL   end
+      if mn == "find"        do sctx.types.set(idx, @TID_INT)    return @TID_INT    end
+      if mn == "char_at"     do sctx.types.set(idx, @TID_INT)    return @TID_INT    end
     end
     if mn == "len"   do sctx.types.set(idx, @TID_INT)  return @TID_INT  end
     if mn == "push"  do sctx.types.set(idx, @TID_VOID) return @TID_VOID end
