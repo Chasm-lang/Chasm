@@ -174,12 +174,12 @@ defp board_get(col :: int, row :: int) :: int do
   if col < 0 or col > 9 do return 1 end   # side walls
   if row > 19            do return 1 end   # floor
   if row < 0             do return 0 end   # above board — open
-  return @board.get(row * 10 + col)
+  return @board[row * 10 + col]
 end
 
 defp board_set(col :: int, row :: int, val :: int) do
   if col >= 0 and col <= 9 and row >= 0 and row <= 19 do
-    @board.set(row * 10 + col, val)
+    @board[row * 10 + col] = val
   end
 end
 
@@ -332,7 +332,7 @@ end
 # ---- Reset ------------------------------------------------------------------
 
 defp reset_game() do
-  for i in 0..200 do @board.set(i, 0) end
+  for i in 0..200 do @board[i] = 0 end
   @score     = 0
   @lines     = 0
   @level     = 1
@@ -356,7 +356,7 @@ def on_tick(dt :: float) do
   @ft_head = persist_copy((@ft_head + 1) % 120)
   if @ft_head > 60 do
     ms = to_int(dt * 1000.0)
-    @ft_buf.set(@ft_head, ms)
+    @ft_buf[@ft_head] = ms
   end
 
   if @gstate == 0 do
@@ -675,7 +675,7 @@ def on_draw() do
   graph_h = 40.0   # max bar height = 50ms scale
   for i in 0..120 do
     idx  = (i + @ft_head) - ((i + @ft_head) / 120) * 120
-    ms_v = @ft_buf.get(idx)
+    ms_v = @ft_buf[idx]
     bar  = clamp(ms_v * 0.8, 0.0, graph_h)
     col  = 0x44FF88FF
     if ms_v > 50 do col = 0xFF4422FF end   # red if over 50ms (sub-20fps)
