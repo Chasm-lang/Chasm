@@ -118,6 +118,7 @@ defp c_type(tid :: int, structs :: []StructDef) :: string do
   if tid == @TID_ATOM     do return "const char*"   end
   if tid == @TID_VOID     do return "void"           end
   if tid == @TID_ARRAY    do return "ChasmArray"     end
+  if tid == @TID_MAP      do return "ChasmMap"       end
   if tid == @TID_STRBUILD do return "ChasmStrBuilder" end
   i = 0
   while i < structs.len do

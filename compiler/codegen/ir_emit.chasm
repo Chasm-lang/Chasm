@@ -130,7 +130,13 @@ defp ir_emit_fn(cctx :: CCtx, prog :: IRProg, fn_def :: IRFn) do
           end
         end
       end
-      if is_typed_arr_new == false do
+      is_map_new = false
+      if op.name == "map_new" do
+        is_map_new = true
+        a0_mn :: IRVal = prog.args.get(op.ai)
+        sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat("ChasmMap ", str_concat(op.dst.tmp, str_concat(" = chasm_map_new(ctx, ", str_concat(a0_mn.tmp, ");"))))))
+      end
+      if is_typed_arr_new == false and is_map_new == false do
         a_str = args_str(prog, op.ai, op.ac)
         sep_str = ""
         if op.ac > 0 do sep_str = ", " end
@@ -184,11 +190,29 @@ defp ir_emit_fn(cctx :: CCtx, prog :: IRProg, fn_def :: IRFn) do
         et_suf_mc = array_elem_suffix(prog.structs, op.a.elem_tid)
         fn_call_mc = str_concat("chasm_array_", str_concat(op.name, str_concat(et_suf_mc, str_concat("(ctx, &", str_concat(recv_s, str_concat(sep_rest, str_concat(rest_a, ")")))))))
       else
+      if op.a.tid == @TID_MAP do
+        is_no_suf_map = false
+        if op.name == "has" do is_no_suf_map = true end
+        if op.name == "del" do is_no_suf_map = true end
+        if op.name == "len" do is_no_suf_map = true end
+        if is_no_suf_map do
+          fn_call_mc = str_concat("chasm_map_", str_concat(op.name, str_concat("(ctx, &", str_concat(recv_s, str_concat(sep_rest, str_concat(rest_a, ")"))))))
+        else
+          et_suf_map = "_i"
+          if op.a.elem_tid == @TID_FLOAT  do et_suf_map = "_f" end
+          if op.a.elem_tid == @TID_BOOL   do et_suf_map = "_b" end
+          if op.a.elem_tid == @TID_STRING do et_suf_map = "_s" end
+          if op.a.elem_tid == @TID_ATOM   do et_suf_map = "_s" end
+          suffix_part = str_concat(et_suf_map, str_concat("(ctx, &", str_concat(recv_s, str_concat(sep_rest, str_concat(rest_a, ")")))))
+          fn_call_mc = str_concat("chasm_map_", str_concat(op.name, suffix_part))
+        end
+      else
         if op.a.tid == @TID_STRING or op.a.tid == @TID_ATOM do
           fn_call_mc = str_concat("chasm_str_", str_concat(op.name, str_concat("(ctx, ", str_concat(recv_s, str_concat(sep_rest, str_concat(rest_a, ")"))))))
         else
           fn_call_mc = str_concat("chasm_", str_concat(op.name, str_concat("(ctx, ", str_concat(recv_s, str_concat(sep_rest, str_concat(rest_a, ")"))))))
         end
+      end
       end
       end
       if str_len(op.dst.tmp) > 0 do
