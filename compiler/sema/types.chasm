@@ -11,6 +11,7 @@
 @TID_ARRAY    :: persistent = 7
 @TID_STRBUILD :: persistent = 8
 @TID_TUPLE    :: persistent = 9
+@TID_MAP      :: persistent = 10
 
 # ---- Symbol table ------------------------------------------------------------
 # Pre-allocated flat array; sym_len tracks the logical size.
@@ -81,6 +82,19 @@ defp sym_push_lt(syms :: []Sym, sym_len :: int, name :: string, type_id :: int, 
   s :: Sym = Sym{ name: name, type_id: type_id, elem_type: elem_t, lifetime: lt }
   syms.set(sym_len, s)
   return sym_len + 1
+end
+
+defp sym_set_elem(syms :: []Sym, sym_len :: int, name :: string, elem_t :: int) do
+  i = sym_len - 1
+  while i >= 0 do
+    s = syms.get(i)
+    if s.name == name do
+      updated :: Sym = Sym{ name: s.name, type_id: s.type_id, elem_type: elem_t, lifetime: s.lifetime }
+      syms.set(i, updated)
+      return
+    end
+    i = i - 1
+  end
 end
 
 defp sym_lifetime_lookup(syms :: []Sym, sym_len :: int, name :: string) :: int do

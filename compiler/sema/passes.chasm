@@ -390,6 +390,7 @@ defp type_name(tid :: int) :: string do
   if tid == @TID_ARRAY    do return "array"    end
   if tid == @TID_STRBUILD do return "strbuild" end
   if tid == @TID_TUPLE    do return "tuple"    end
+  if tid == @TID_MAP      do return "map"      end
   return str_concat("struct#", int_to_str(tid))
 end
 

@@ -315,6 +315,42 @@ defp sema_expr(sctx :: SCtx,
       if mn == "find"        do sctx.types.set(idx, @TID_INT)    return @TID_INT    end
       if mn == "char_at"     do sctx.types.set(idx, @TID_INT)    return @TID_INT    end
     end
+    if recv_t == @TID_MAP do
+      if mn == "has" do sctx.types.set(idx, @TID_BOOL) return @TID_BOOL end
+      if mn == "del" do sctx.types.set(idx, @TID_VOID) return @TID_VOID end
+      if mn == "set" do
+        # Infer value elem_type from the third arg (index 2): .set(key, val)
+        if cl >= 2 do
+          val_arg_idx = sctx.ch.get(cs + 1)
+          val_t_map = sema_expr(sctx, syms, sym_len, dc, val_arg_idx)
+          if recv_node.tag == :ident do
+            cur_et = sym_elem_lookup(syms, sym_len, recv_node.name)
+            if cur_et == 0 do
+              sym_set_elem(syms, sym_len, recv_node.name, val_t_map)
+            end
+          end
+          if recv_node.tag == :at_ref do
+            cur_et = sym_elem_lookup(syms, sym_len, recv_node.name)
+            if cur_et == 0 do
+              sym_set_elem(syms, sym_len, recv_node.name, val_t_map)
+            end
+          end
+        end
+        sctx.types.set(idx, @TID_VOID)
+        return @TID_VOID
+      end
+      if mn == "get" do
+        elem_t_map = 0
+        if recv_node.tag == :ident do
+          elem_t_map = sym_elem_lookup(syms, sym_len, recv_node.name)
+        end
+        if recv_node.tag == :at_ref do
+          elem_t_map = sym_elem_lookup(syms, sym_len, recv_node.name)
+        end
+        sctx.types.set(idx, elem_t_map)
+        return elem_t_map
+      end
+    end
     if mn == "len"   do sctx.types.set(idx, @TID_INT)  return @TID_INT  end
     if mn == "push"  do sctx.types.set(idx, @TID_VOID) return @TID_VOID end
     if mn == "set"   do sctx.types.set(idx, @TID_VOID) return @TID_VOID end

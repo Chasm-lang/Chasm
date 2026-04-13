@@ -266,6 +266,8 @@ defp builtin_ret(name :: string) :: int do
   # array-returning
   if name == "array_new"       do return @TID_ARRAY end
   if name == "array_fixed"     do return @TID_ARRAY end
+  # map-returning
+  if name == "map_new"         do return @TID_MAP end
   # promotion functions — passthrough; we return TID_INT to suppress E005 (type is arg-dependent)
   if name == "copy_to_script"  do return @TID_INT end
   if name == "persist_copy"    do return @TID_INT end
