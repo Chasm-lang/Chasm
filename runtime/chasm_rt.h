@@ -464,7 +464,9 @@ static inline uint32_t _chasm_map_slot(const ChasmMap *m, const char *key) {
         if (m->keys[i] == (const char *)-1) { if (tomb < 0) tomb = (int32_t)i; continue; }
         if (strcmp(m->keys[i], key) == 0) return i;
     }
-    return (tomb >= 0) ? (uint32_t)tomb : 0;
+    if (tomb >= 0) return (uint32_t)tomb;
+    fprintf(stderr, "chasm: map full — increase initial capacity passed to map_new()\n");
+    abort();
 }
 
 static inline ChasmMap chasm_map_new(ChasmCtx *ctx, int64_t cap) {
