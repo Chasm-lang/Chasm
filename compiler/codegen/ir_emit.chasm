@@ -113,7 +113,8 @@ defp ir_emit_fn(cctx :: CCtx, prog :: IRProg, fn_def :: IRFn) do
     if k == :index_set do
       et_suf_is = array_elem_suffix(prog.structs, op.a.elem_tid)
       val_is    = prog.args.get(op.ai)
-      sec_emit(cctx, @SEC_BODY, str_concat(ind, str_concat("chasm_array_set", str_concat(et_suf_is, str_concat("(ctx, &", str_concat(op.a.tmp, str_concat(", ", str_concat(op.b.tmp, str_concat(", ", str_concat(val_is.tmp, ");")))))))))
+      is_line   = str_concat(ind, str_concat("chasm_array_set", str_concat(et_suf_is, str_concat("(ctx, &", str_concat(op.a.tmp, str_concat(", ", str_concat(op.b.tmp, str_concat(", ", str_concat(val_is.tmp, ");")))))))))
+      sec_emit(cctx, @SEC_BODY, is_line)
     end
 
     if k == :call do
