@@ -1,4 +1,4 @@
-#include "chasm_rt.h"
+#include "../../runtime/chasm_rt.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
